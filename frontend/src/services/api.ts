@@ -1,10 +1,12 @@
 /**
  * Backend API client for StealthPay.
- * Uses VITE_API_URL or falls back to same-origin /api.
+ * Uses VITE_API_URL or, in production, the deployed Render backend.
  */
 
-// In dev, Vite proxies /api to backend. In prod, set VITE_API_URL.
-const API_BASE = import.meta.env.VITE_API_URL || "";
+// Dev: Vite proxies /api to localhost. Prod: VITE_API_URL or default Render URL.
+const API_BASE =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? "https://stealthpay.onrender.com" : "");
 
 async function fetchApi(
   path: string,
