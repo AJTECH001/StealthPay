@@ -33,9 +33,7 @@ export default function Navbar() {
             <span className="text-xl font-bold text-foreground tracking-tight group-hover:text-neon-primary transition-colors duration-300">
               StealthPay
             </span>
-            <span className="text-[10px] text-gray-500 uppercase tracking-widest font-medium">
-              Privacy First
-            </span>
+           
           </div>
         </Link>
 
