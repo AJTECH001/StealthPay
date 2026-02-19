@@ -1,5 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
 import { WalletMultiButton } from "@provablehq/aleo-wallet-adaptor-react-ui";
+import { useWallet } from "@provablehq/aleo-wallet-adaptor-react";
 import { cn } from "../../utils/cn";
 
 const landingNavItems = [
@@ -21,9 +22,11 @@ const appNavItems = [
 
 export default function Navbar() {
   const location = useLocation();
+  const { address, connecting } = useWallet();
   const isLanding = location.pathname === "/";
   const navItems = isLanding ? landingNavItems : appNavItems;
   const isActive = (path: string) => location.pathname === path;
+  const isProduction = typeof window !== "undefined" && !window.location.hostname.includes("localhost");
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 h-24 flex items-center justify-center px-6 pointer-events-none">
@@ -68,8 +71,13 @@ export default function Navbar() {
               Launch App
             </Link>
           )}
-          <div className="wallet-adapter-wrapper">
+          <div className="wallet-adapter-wrapper flex flex-col items-end">
             <WalletMultiButton className="!bg-foreground !border !border-foreground/20 !rounded-full !py-3 !px-6 !h-auto !font-sans !font-semibold !text-sm !text-white hover:!opacity-90 transition-all shadow-glass hover:!shadow-glass-hover" />
+            {isProduction && !address && !connecting && (
+              <p className="text-[10px] text-gray-500 mt-1 max-w-[180px] text-right">
+                Use Leo Wallet on <strong>Aleo Testnet</strong>; unlock then connect.
+              </p>
+            )}
           </div>
         </div>
       </div>

@@ -25,7 +25,7 @@ export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
       wallets={wallets}
       decryptPermission={DecryptPermission.AutoDecrypt}
       network={Network.TESTNET}
-      autoConnect
+      autoConnect={false}
       programs={["stealthpay.aleo", "credits.aleo"]}
     >
       <WalletModalProvider>{children}</WalletModalProvider>
