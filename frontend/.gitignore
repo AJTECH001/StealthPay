@@ -1,11 +1,3 @@
-# Environment variables (never commit secrets)
-.env
-.env.local
-.env.*.local
-
-# Vite cache (when run from root before restructure)
-.vite
-
 # Logs
 logs
 *.log

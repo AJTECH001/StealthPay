@@ -4,24 +4,98 @@
 
 ---
 
-## Overview
+## What is StealthPay?
 
-StealthPay is a decentralized payment gateway built on [Aleo](https://aleo.org) that solves the transparency paradox of public blockchains. Instead of choosing between total surveillance or total obscurity, users get:
+StealthPay is a decentralized payment system built on [Aleo](https://aleo.org) that enables **private invoice-based payments** on top of Aleo Credits. Merchants create invoices and receive payments privately; payers stay off the public ledger; only the merchant receives a cryptographic `Payment` record (receipt) for verification. StealthPay adds an **invoice layer**—commitment hashes, expiry, replay protection—on top of Aleo's native private transfers.
 
-- **Private by default** — Sender identity and balances stay off the public ledger
-- **Verifiable by design** — Merchants receive cryptographic proof of payment without exposing payer history
-- **Selectively disclosable** — Transaction View Keys (TVKs) enable receipts for refunds, audits, or tax reporting
+**Program ID:** `stealthpay.aleo` · **Network:** Aleo Testnet
 
 ---
 
-## Features
+## Why StealthPay-App?
 
-| Feature | Description |
-|--------|-------------|
-| **Private transfers** | Uses Aleo's native `credits.aleo/transfer_private` — no public balance updates |
-| **Payment receipts** | Private `Payment` records owned by merchants for settlement verification |
-| **Selective disclosure** | Merchants decrypt incoming records via View Keys; TVKs for third-party proofs |
-| **Zero fees (MVP)** | No protocol fees — focus on adoption and network effects |
+**stealthpay-app** is the full-stack application that brings StealthPay from on-chain program to a usable product. The Leo contract (`stealthpay.aleo`) defines the payment logic; the app provides:
+
+- **Web UI** — Create invoices, pay via links, view activity, settle multi-pay campaigns
+- **Backend API** — Invoice indexing, stats, merchant lookups (Neon PostgreSQL)
+- **Wallet integration** — Leo Wallet adapter for signing and executing private transactions
+
+Without the app, users would need to interact with the contract via CLI or custom scripts. The app makes StealthPay accessible to merchants and payers who want a familiar web experience while preserving full on-chain privacy.
+
+---
+
+## Problem We Are Solving
+
+### The Transparency Paradox
+
+On public blockchains (Ethereum, Bitcoin, etc.), every transaction is visible to everyone. Balances, addresses, and amounts are permanently public. Users face a choice:
+
+- **Total surveillance** — Accept that all spending and holdings are visible to anyone
+- **Total obscurity** — Use mixers or privacy coins that sacrifice verifiability
+
+Merchants need **proof of payment** (for accounting, refunds, audits). Payers want **financial privacy** (no public transaction graph). Traditional blockchains force a trade-off: you can't have both without trust in intermediaries.
+
+### The StealthPay Angle
+
+Aleo uses **zero-knowledge proofs** to execute programs privately. State and logic run off-chain; only validity proofs are published. StealthPay builds on this to give:
+
+- **Private by default** — Sender identity and balances stay off the public ledger
+- **Verifiable by design** — Merchants get cryptographic proof of payment
+- **Selectively disclosable** — Merchants can reveal specific payments for audits or refunds without exposing unrelated history
+
+---
+
+## StealthPay Approach
+
+### 1. Invoice Flow (Commitment + Replay Protection)
+
+| Step | What happens |
+|------|--------------|
+| **Create invoice** | Merchant commits to (merchant, amount, salt) via hash. Only the hash and status go on-chain—amount and merchant stay private. |
+| **Pay invoice** | Payer uses `pay_invoice` with a private credits record. The program transfers credits to the merchant and emits a private `Payment` record. Replay protection uses a receipt key (payment secret + salt). |
+| **Settle** | Standard invoices auto-settle on pay. Multi-pay invoices are settled manually by the merchant when the campaign ends. |
+
+### 2. Private Records
+
+- **`Payment`** — Private receipt owned by the merchant (owner, amount, payer). Only the merchant can decrypt it.
+- **Invoice metadata** — Stored by commitment hash only. No plaintext merchant or amount on-chain.
+
+### 3. Two Payment Paths
+
+- **Invoice path** — `create_invoice` → share payment link → `pay_invoice`. Full invoice semantics (expiry, status, replay protection).
+- **Direct path** — `make_payment`. No invoice; direct private transfer + `Payment` receipt. Good for tips or simple one-off payments.
+
+### 4. Backend as Indexer
+
+The backend does **not** read from the chain. The frontend pushes invoice data after `create_invoice` and updates status after `pay_invoice` or `settle_invoice`. This keeps the app responsive while the chain remains the source of truth.
+
+---
+
+## Project Structure
+
+```
+stealthpay-app/
+├── frontend/                # React + Vite web app
+│   ├── src/
+│   │   ├── desktop/         # Pages (Explorer, CreateInvoice, PaymentPage, Profile)
+│   │   ├── components/      # UI components
+│   │   ├── hooks/           # useStealthPay (contract calls)
+│   │   ├── providers/       # Aleo wallet adapter
+│   │   └── services/        # API client, stealthpay helpers
+│   └── vite.config.ts       # Proxy /api → backend
+├── backend/                 # Express API + Neon PostgreSQL
+│   ├── index.js             # REST endpoints (invoices, stats, by-salt)
+│   ├── db_schema.sql        # Invoices table
+│   ├── setup-db.js          # Schema setup (no psql required)
+│   └── encryption.js        # Encrypt merchant/payer addresses
+├── contracts/
+│   └── stealthpay/          # Leo program (stealthpay.aleo)
+│       ├── src/main.leo     # create_invoice, pay_invoice, settle_invoice, make_payment
+│       └── deploy.sh
+├── docs/
+│   └── TESTING_WALKTHROUGH.md
+└── README.md
+```
 
 ---
 
@@ -30,87 +104,64 @@ StealthPay is a decentralized payment gateway built on [Aleo](https://aleo.org) 
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+
-- [Leo CLI](https://leo-lang.org/) (for contract development)
+- [Leo Wallet](https://www.leo.app/) (or compatible Aleo wallet)
+- [Leo CLI](https://leo-lang.org/) (for contract development/deployment)
 
-### Install & Run
+### 1. Backend (Neon PostgreSQL + API)
 
 ```bash
-# Install dependencies
+cd backend
+cp .env.example .env
+# Edit .env: DATABASE_URL (Neon), ENCRYPTION_KEY (openssl rand -hex 32)
 npm install
-
-# Start development server
-npm run dev
+npm run setup-db   # Creates tables
+npm run dev       # Runs on port 3000
 ```
 
-Open [http://localhost:5173](http://localhost:5173) to view the landing page.
+### 2. Frontend
 
-### Connect Wallet
+```bash
+cd frontend
+npm install
+npm run dev       # Runs on http://localhost:5173
+```
 
-StealthPay uses a **faucet-style** address input — no browser extension required. Enter your Aleo address in the Connect Wallet modal to get started.
+### 3. Connect wallet
+
+Use **Connect Wallet** in the navbar. Ensure `stealthpay.aleo` is deployed on your network and you have private credits for paying invoices.
+
+### 4. Contract deployment (if needed)
+
+```bash
+cd contracts/stealthpay
+cp .env.example .env
+# Edit .env: NETWORK, PRIVATE_KEY
+leo build
+leo deploy --broadcast
+```
+
+See [contracts/stealthpay/README.md](contracts/stealthpay/README.md) for details.
 
 ---
 
-## Project Structure
+## Features
 
-```
-stealthpay-app/
-├── src/
-│   ├── components/landing/   # Landing page (Hero, Features, Footer, etc.)
-│   ├── providers/           # WalletContext (address state)
-│   ├── workers/             # Aleo worker client for make_payment
-│   └── main.tsx
-├── stealthpaycontract/      # Leo program (stealthpay.aleo)
-│   ├── src/main.leo         # Payment record + make_payment transition
-│   └── deploy.sh
-├── ProductDesign.md         # Product vision, architecture, GTM
-└── README.md
-```
-
----
-
-## Technical Architecture
-
-### On-Chain (Leo)
-
-The `stealthpay.aleo` program:
-
-1. **Imports** `credits.aleo` for native private transfers
-2. **Defines** a `Payment` record: `owner`, `amount`, `payer`
-3. **Exposes** `make_payment(sender_record, amount, merchant)` — transfers credits privately and creates a merchant-owned receipt
-
-```leo
-transition make_payment(
-    sender_record: credits.aleo/credits,
-    amount: u64,
-    merchant: address
-) -> (Payment, credits.aleo/credits, credits.aleo/credits)
-```
-
-### Client-Side
-
-- **Worker** (`src/workers/`): Web Worker + Comlink for executing `make_payment` via Aleo SDK
-- **WalletContext**: Stores Aleo address from manual input (faucet-style)
-- **Landing page**: React + Vite; Connect Wallet modal, feature cards, merchant section
-
----
-
-## Contract Deployment
-
-The program is deployed on **Aleo testnet**:
-
-| Item | Value |
-|------|-------|
-| **Program ID** | `stealthpay.aleo` |
-| **Network** | Aleo Testnet |
-
-See [`stealthpaycontract/README.md`](./stealthpaycontract/README.md) for build, deploy, and verification steps.
+| Feature | Description |
+|--------|-------------|
+| **Private transfers** | Uses `credits.aleo/transfer_private` — no public balance updates |
+| **Payment receipts** | Private `Payment` records owned by merchants |
+| **Invoice flow** | `create_invoice` / `pay_invoice` with commitment hash, expiry, replay protection |
+| **Multi-pay invoices** | Campaign-style invoices; merchant settles manually |
+| **Direct payment** | `make_payment` — no invoice, just private transfer + receipt |
+| **Selective disclosure** | Merchants can reveal specific receipts for audits or refunds |
+| **Zero protocol fees (MVP)** | Pay only network costs |
 
 ---
 
 ## Documentation
 
-- **[ProductDesign.md](./ProductDesign.md)** — Problem definition, solution, market, GTM, success metrics
-- **[stealthpaycontract/README.md](./stealthpaycontract/README.md)** — Leo program details, threat model, local development
+- **[docs/TESTING_WALKTHROUGH.md](docs/TESTING_WALKTHROUGH.md)** — End-to-end testing guide for all functions
+- **[contracts/stealthpay/README.md](contracts/stealthpay/README.md)** — Leo program design, build, deploy
 
 ---
 
@@ -118,10 +169,6 @@ See [`stealthpaycontract/README.md`](./stealthpaycontract/README.md) for build, 
 
 | Phase | Focus |
 |-------|-------|
-| **Phase 1 (MVP)** | Peer-to-peer private transfer + Proof of Payment — *current* |
+| **Phase 1 (MVP)** | Private transfer + Payment receipt + invoice flow — *current* |
 | **Phase 2** | SDK for auto-detection of payments and invoice matching |
-| **Phase 3** | E-commerce plugins, DAO payroll integrations |
-
----
-
-
+| **Phase 3** | E-commerce plugins, DAO integrations |

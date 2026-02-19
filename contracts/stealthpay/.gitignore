@@ -1,0 +1,15 @@
+# Build output
+build/
+outputs/
+*.avm
+*.prover
+*.verifier
+
+# Environment (never commit keys)
+.env
+.env.local
+
+# IDE / OS
+.idea
+.DS_Store
+*.sw?
