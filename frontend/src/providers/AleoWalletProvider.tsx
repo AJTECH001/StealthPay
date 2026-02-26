@@ -12,6 +12,7 @@ interface AleoWalletProviderProps {
 }
 
 
+
 function createPatchedLeoAdapter(appName: string): LeoWalletAdapter {
   const adapter = new LeoWalletAdapter({ appName });
   const originalConnect = adapter.connect.bind(adapter);
@@ -19,17 +20,26 @@ function createPatchedLeoAdapter(appName: string): LeoWalletAdapter {
   (adapter as any).connect = async function (
     ...args: Parameters<typeof originalConnect>
   ) {
+   
+    const leoWin = (window as any).leoWallet ?? (window as any).leo;
+    if (leoWin) {
+      (adapter as any)._leoWallet = leoWin;
+    }
+
     try {
       return await originalConnect(...args);
     } catch (err: any) {
       if (err?.message === "No address returned from wallet") {
-        // Poll for publicKey for up to 1 second (5 × 200 ms)
-        const leoWallet = (adapter as any)._leoWallet;
-        for (let i = 0; i < 5; i++) {
-          await new Promise((r) => setTimeout(r, 200));
-          const publicKey = leoWallet?.publicKey;
+        // Fallback: poll until the extension populates publicKey
+        for (let i = 0; i < 20; i++) {
+          await new Promise((r) => setTimeout(r, 300));
+          const freshWallet =
+            (window as any).leoWallet ?? (window as any).leo;
+          const publicKey =
+            freshWallet?.publicKey ?? freshWallet?.account?.address;
           if (publicKey) {
             (adapter as any)._publicKey = publicKey;
+            (adapter as any)._leoWallet = freshWallet;
             (adapter as any).network = args[0];
             const account = { address: publicKey };
             (adapter as any).account = account;
@@ -60,7 +70,7 @@ export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
       decryptPermission={DecryptPermission.AutoDecrypt}
       network={Network.TESTNET}
       autoConnect={false}
-      programs={["stealthpay.aleo", "credits.aleo"]}
+      programs={["credits.aleo"]}
     >
       <WalletModalProvider>{children}</WalletModalProvider>
     </ProvableWalletProvider>
