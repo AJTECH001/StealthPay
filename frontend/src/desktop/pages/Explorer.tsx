@@ -68,8 +68,10 @@ export default function Explorer() {
   }, [address, refreshBalances, setPendingShieldAmount]);
 
   // Poll for final tx hash for direct payments
+  // Real Aleo tx IDs start with "at1". Leo wallet returns UUIDs (contain "-"),
+  // Shield wallet returns temp IDs like "shield_XXXX_XXXX". Both need polling.
   useEffect(() => {
-    if (!directResult || !directResult.includes("-") || !address) return;
+    if (!directResult || directResult.startsWith("at1") || !address) return;
 
     let timer: NodeJS.Timeout;
     let cancelled = false;
@@ -77,7 +79,7 @@ export default function Explorer() {
     const poll = async () => {
       try {
         const res = await transactionStatus?.(directResult);
-        if (res && res.transactionId && res.transactionId !== directResult && !res.transactionId.includes("-")) {
+        if (res && res.transactionId && res.transactionId.startsWith("at1")) {
           if (cancelled) return;
           setDirectResult(res.transactionId);
           return;
@@ -432,7 +434,7 @@ export default function Explorer() {
                   {directResult && (
                     <div className="p-4 rounded-xl bg-white/5 border border-white/10 mt-4 overflow-hidden">
                       <p className="text-xs text-slate-11 mb-1">Success. Transaction ID:</p>
-                      {directResult.includes("-") ? (
+                      {!directResult.startsWith("at1") ? (
                         <p className="text-[10px] text-amber-500 font-bold uppercase tracking-widest animate-pulse">Finalizing on Aleo Ledger...</p>
                       ) : (
                         <p className="text-[10px] font-mono text-white break-all">{directResult}</p>

@@ -30,7 +30,7 @@ function VerificationBlock({
     <div className="rounded-2xl bg-white/[0.02] border border-white/5 p-6 space-y-4">
       <div className="space-y-1">
         <p className="text-sm font-bold text-white tracking-tight">{title}</p>
-        {txId.includes("-") ? (
+        {!txId.startsWith("at1") ? (
           <p className="text-[10px] text-amber-500 font-bold uppercase tracking-widest animate-pulse">Finalizing on Aleo Ledger...</p>
         ) : description && (
           <p className="text-xs text-slate-11">{description}</p>
@@ -51,16 +51,18 @@ function VerificationBlock({
         </Button>
       </div>
 
-      <a
-        href={explorerUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block"
-      >
-        <Button variant="secondary" className="w-full text-[10px] uppercase tracking-widest py-3">
-          Explore On-Chain →
-        </Button>
-      </a>
+      {txId.startsWith("at1") && (
+        <a
+          href={explorerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block"
+        >
+          <Button variant="secondary" className="w-full text-[10px] uppercase tracking-widest py-3">
+            Explore On-Chain →
+          </Button>
+        </a>
+      )}
     </div>
   );
 }
@@ -146,7 +148,9 @@ export default function PaymentPage() {
 
   // Poll for final on-chain transaction hash if only UUID is known
   useEffect(() => {
-    if (!paymentResult?.transactionId || !paymentResult.transactionId.includes("-") || !address) return;
+    // Poll while ID is temporary (Leo wallet: UUID with "-", Shield wallet: "shield_XXX")
+    // Real on-chain Aleo tx IDs always start with "at1"
+    if (!paymentResult?.transactionId || paymentResult.transactionId.startsWith("at1") || !address) return;
 
     let timer: NodeJS.Timeout;
     let cancelled = false;
@@ -156,7 +160,7 @@ export default function PaymentPage() {
         console.log("Polling for final tx hash for request:", paymentResult.transactionId);
         const res = await transactionStatus?.(paymentResult.transactionId);
         
-        if (res && res.transactionId && res.transactionId !== paymentResult.transactionId && !res.transactionId.includes("-")) {
+        if (res && res.transactionId && res.transactionId.startsWith("at1")) {
           console.log("Observed final tx hash:", res.transactionId);
           if (cancelled) return;
 
