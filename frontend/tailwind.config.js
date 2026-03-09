@@ -7,36 +7,51 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: "#ffffff",
-        foreground: "#000000",
-        "void-main": "#ffffff",
-        "void-lighter": "#f5f5f5",
-        "neon-primary": "#000000",
-        "neon-secondary": "#525252",
-        "neon-accent": "#737373",
-        "glass-border": "rgba(0, 0, 0, 0.12)",
-        "glass-border-hover": "rgba(0, 0, 0, 0.25)",
-        "glass-surface": "rgba(255, 255, 255, 0.8)",
-        "glass-highlight": "rgba(0, 0, 0, 0.06)",
-        success: "#000000",
-        error: "#000000",
-        warning: "#000000",
+        // Base
+        background: "#000000",
+        foreground: "#FFFFFF",
+        
+        // Radix Slate equivalent for neutral darks
+        slate: {
+          1: "#000000",
+          2: "#0a0a0a",
+          3: "#1a1a1a",
+          4: "#262626",
+          5: "#404040",
+          6: "#525252",
+          7: "#737373",
+          11: "#a3a3a3",
+          12: "#eeeeee",
+        },
+
+        // Brand Accents (Monochrome)
+        primary: "#FFFFFF",
+        secondary: "#a3a3a3",
+        accent: "#404040",
+
+        // Glass States
+        "glass-border": "rgba(255, 255, 255, 0.08)",
+        "glass-border-hover": "rgba(255, 255, 255, 0.15)",
+        "glass-surface": "rgba(10, 10, 10, 0.4)",
+        "glass-highlight": "rgba(255, 255, 255, 0.05)",
       },
       fontFamily: {
-        sans: ["Space Grotesk", "sans-serif"],
+        sans: ["Inter", "system-ui", "sans-serif"],
+        serif: ["Playfair Display", "serif"],
       },
       backgroundImage: {
-        "gradient-radial": "radial-gradient(var(--tw-gradient-stops))",
         "glass-gradient":
           "linear-gradient(145deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%)",
-        "glass-gradient-hover":
-          "linear-gradient(145deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%)",
+        "noise": "url('/noise.png')",
       },
       boxShadow: {
-        neon: "0 0 5px rgba(0, 0, 0, 0.15), 0 0 20px rgba(0, 0, 0, 0.1)",
-        glass: "0 8px 32px 0 rgba(0, 0, 0, 0.08)",
-        "glass-hover": "0 8px 32px 0 rgba(0, 0, 0, 0.12)",
+        glass: "0 8px 32px 0 rgba(0, 0, 0, 0.8)",
+        "glass-hover": "0 8px 32px 0 rgba(0, 0, 0, 1)",
+        "premium": "0 0 20px rgba(255, 255, 255, 0.05)",
       },
+      backdropBlur: {
+        "xs": "2px",
+      }
     },
   },
   plugins: [],

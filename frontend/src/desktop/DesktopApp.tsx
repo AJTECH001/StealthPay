@@ -26,19 +26,21 @@ function DesktopRoutes() {
 
 export default function DesktopApp() {
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden">
+    <div className="min-h-screen bg-black relative overflow-hidden text-white selection:bg-white/20">
       <div className="fixed inset-0 pointer-events-none z-0">
-        {/* Static orbs only — animating large blur causes browser jank/freezing */}
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-black/[0.03] rounded-full blur-[120px]" />
-        <div className="absolute top-[20%] right-[-5%] w-[30%] h-[30%] bg-gray-400/10 rounded-full blur-[100px]" />
-        <div className="absolute bottom-[-10%] left-[20%] w-[35%] h-[35%] bg-black/[0.03] rounded-full blur-[120px]" />
+        {/* Extremely subtle premium glows */}
+        <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-white/[0.03] rounded-full blur-[160px]" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-white/[0.02] rounded-full blur-[140px]" />
       </div>
 
       <Navbar />
 
-      <main className="relative z-10 pt-24 px-4 pb-12 container-custom">
+      <main className="relative z-10 pt-32 px-6 pb-20 container-custom">
         <DesktopRoutes />
       </main>
+      
+      {/* Texture Overlay handled in index.css body::after */}
     </div>
   );
 }
+

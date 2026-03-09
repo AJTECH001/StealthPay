@@ -1,5 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
 import { WalletMultiButton } from "@provablehq/aleo-wallet-adaptor-react-ui";
+import { motion } from "framer-motion";
 import { cn } from "../../utils/cn";
 
 const landingNavItems = [
@@ -10,14 +11,12 @@ const landingNavItems = [
 
 const appNavItems = [
   { path: "/explorer", label: "Explorer" },
-  { path: "/create", label: "Create Invoice" },
+  { path: "/create", label: "Create" },
   { path: "/profile", label: "Profile" },
   { path: "/docs", label: "Docs" },
   { path: "/privacy", label: "Privacy" },
   { path: "/verify", label: "Verify" },
 ];
-
-
 
 export default function Navbar() {
   const location = useLocation();
@@ -26,19 +25,22 @@ export default function Navbar() {
   const isActive = (path: string) => location.pathname === path;
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 h-24 flex items-center justify-center px-6 pointer-events-none">
+    <motion.nav 
+      initial={{ y: -20, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      className="fixed top-0 left-0 right-0 z-50 h-24 flex items-center justify-center px-6 pointer-events-none"
+    >
       <div className="w-full max-w-7xl flex items-center justify-between pointer-events-auto">
         <Link to="/" className="group flex items-center gap-3 no-underline">
           <div className="flex flex-col">
-            <span className="text-xl font-bold text-foreground tracking-tight group-hover:text-neon-primary transition-colors duration-300">
+            <span className="text-xl font-bold text-white tracking-tight group-hover:text-slate-11 transition-colors duration-300">
               StealthPay
             </span>
-           
           </div>
         </Link>
 
-        <div className="flex items-center gap-3">
-          <div className="bg-white/90 backdrop-blur-xl border border-glass-border rounded-full p-1 flex items-center gap-1 shadow-glass">
+        <div className="flex items-center gap-6">
+          <div className="bg-white/[0.03] backdrop-blur-xl border border-white/10 rounded-full p-1 flex items-center gap-1 shadow-2xl">
             {navItems.map((item) => {
               const active = isActive(item.path);
               return (
@@ -46,33 +48,40 @@ export default function Navbar() {
                   key={item.path}
                   to={item.path}
                   className={cn(
-                    "relative px-5 py-2.5 rounded-full text-sm font-medium transition-colors duration-300",
+                    "relative px-5 py-2 rounded-full text-xs font-semibold transition-all duration-300 uppercase tracking-wider",
                     active
-                      ? "text-neon-primary"
-                      : "text-gray-500 hover:text-foreground"
+                      ? "text-white"
+                      : "text-slate-11 hover:text-white"
                   )}
                 >
                   {active && (
-                    <span className="absolute inset-0 rounded-full bg-neon-primary/10 border border-neon-primary/20 shadow-[0_0_15px_rgba(0,0,0,0.08)]" />
+                    <motion.span 
+                      layoutId="nav-active"
+                      className="absolute inset-0 rounded-full bg-white/10 border border-white/20 shadow-[0_0_20px_rgba(255,255,255,0.05)]" 
+                    />
                   )}
                   <span className="relative z-10">{item.label}</span>
                 </Link>
               );
             })}
           </div>
-          {isLanding && (
-            <Link
-              to="/explorer"
-              className="inline-flex items-center px-5 py-2.5 rounded-full text-sm font-semibold bg-foreground text-white border border-foreground/20 shadow-glass hover:opacity-90"
-            >
-              Launch App
-            </Link>
-          )}
-          <div className="wallet-adapter-wrapper">
-            <WalletMultiButton className="!bg-foreground !border !border-foreground/20 !rounded-full !py-3 !px-6 !h-auto !font-sans !font-semibold !text-sm !text-white hover:!opacity-90 transition-all shadow-glass hover:!shadow-glass-hover" />
+          
+          <div className="flex items-center gap-3">
+            {isLanding && (
+              <Link
+                to="/explorer"
+                className="btn-premium py-2 px-5 text-xs uppercase tracking-widest"
+              >
+                Launch App
+              </Link>
+            )}
+            <div className="wallet-adapter-wrapper scale-90 origin-right">
+              <WalletMultiButton className="!bg-white/[0.05] !backdrop-blur-lg !border !border-white/10 !rounded-full !py-2.5 !px-6 !h-auto !font-sans !font-bold !text-xs !uppercase !tracking-widest !text-white hover:!bg-white/10 hover:!border-white/30 transition-all" />
+            </div>
           </div>
         </div>
       </div>
-    </nav>
+    </motion.nav>
   );
 }
+

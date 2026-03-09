@@ -12,7 +12,12 @@ interface AleoWalletProviderProps {
 }
 
 function createPatchedLeoAdapter(appName: string): LeoWalletAdapter {
-  const adapter = new LeoWalletAdapter({ appName });
+  const adapter = new LeoWalletAdapter({ 
+    appName,
+    programIdPermissions: {
+      "testnetbeta": ["credits.aleo", "stealthpay.aleo"]
+    }
+  });
   const originalConnect = adapter.connect.bind(adapter);
 
   (adapter as any).connect = async function (
@@ -64,10 +69,10 @@ export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
   return (
     <ProvableWalletProvider
       wallets={wallets}
-      decryptPermission={DecryptPermission.AutoDecrypt}
+      decryptPermission={DecryptPermission.OnChainHistory}
       network={Network.TESTNET}
       autoConnect
-      programs={["credits.aleo"]}
+      programs={["credits.aleo", "stealthpay.aleo"]}
     >
       <WalletModalProvider>{children}</WalletModalProvider>
     </ProvableWalletProvider>

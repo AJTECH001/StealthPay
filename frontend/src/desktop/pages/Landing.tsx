@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { GlassCard } from "../../components/ui/GlassCard";
 import { Button } from "../../components/ui/Button";
+import { motion } from "framer-motion";
 
 const features = [
   {
@@ -39,141 +40,103 @@ const steps = [
 
 export default function Landing() {
   return (
-    <div className="relative min-h-[80vh]">
-      <div className="space-y-24 md:space-y-32">
-        {/* Hero */}
-        <section className="flex flex-col items-center text-center pt-4 md:pt-8">
-          <div className="max-w-4xl mx-auto">
-            <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold tracking-tighter leading-[1.1] text-foreground mb-6">
-              Privacy-first payments on Aleo
-            </h1>
-            <p className="text-xl md:text-2xl text-gray-600 leading-relaxed max-w-2xl mx-auto mb-10">
-              Stop choosing between total surveillance and total obscurity.
-              StealthPay gives you private-by-default transactions with
-              selective disclosure for compliance and verification.
-            </p>
-            <div className="flex flex-wrap gap-4 justify-center">
-              <Link to="/explorer">
-                <Button size="lg">Launch App</Button>
-              </Link>
-              <Link to="/docs">
-                <Button variant="secondary" size="lg">
-                  Read docs
-                </Button>
-              </Link>
-            </div>
-          </div>
-        </section>
+    <div className="relative min-h-[90vh] flex flex-col gap-32 py-12">
+      {/* Hero */}
+      <section className="flex flex-col items-start text-left max-w-4xl mx-auto w-full pt-12 md:pt-20">
+        <motion.h1 
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.8 }}
+          className="text-5xl md:text-8xl font-serif italic tracking-tighter leading-[0.9] text-white mb-8"
+        >
+          Privacy-first payments <br /> 
+          <span className="not-italic text-slate-11">on Aleo.</span>
+        </motion.h1>
+        
+        <motion.p 
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.8, delay: 0.1 }}
+          className="text-xl md:text-2xl text-slate-11 leading-relaxed max-w-2xl mb-12"
+        >
+          Stop choosing between surveillance and obscurity. 
+          StealthPay gives you private-by-default transactions with 
+          selective disclosure for the modern economy.
+        </motion.p>
+        
+        <motion.div 
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.8, delay: 0.2 }}
+          className="flex flex-wrap gap-4"
+        >
+          <Link to="/explorer">
+            <Button size="lg" className="uppercase tracking-widest text-xs">Launch App</Button>
+          </Link>
+          <Link to="/docs">
+            <Button variant="secondary" size="lg" className="uppercase tracking-widest text-xs">
+              Read documentation
+            </Button>
+          </Link>
+        </motion.div>
+      </section>
 
-        {/* Problem */}
-        <section className="max-w-4xl mx-auto">
-          <div>
-            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4 text-center">
-              The transparency paradox
-            </h2>
-            <p className="text-gray-600 text-lg text-center max-w-2xl mx-auto mb-8">
-              On public blockchains, every transfer is visible. Merchants need
-              proof of payment; payers need privacy. Traditional systems force
-              you to pick one—or accept opaque, unverifiable privacy.
-            </p>
-            <GlassCard className="p-8 md:p-10 text-center">
-              <p className="text-foreground font-semibold text-lg">
-                We're solving the gap between <em>private</em> and{" "}
-                <em>verifiable</em>: private by default, verifiable by design,
-                and selectively disclosable when you need it.
+      {/* Feature Grid */}
+      <section className="max-w-7xl mx-auto w-full">
+        <div className="grid gap-px bg-white/10 border border-white/10 rounded-3xl overflow-hidden grid-cols-1 md:grid-cols-3">
+          {features.map((f, i) => (
+            <div key={i} className="bg-black p-10 hover:bg-slate-2/50 transition-colors group">
+              <h3 className="text-sm font-bold text-white mb-4 uppercase tracking-widest">
+                {f.title}
+              </h3>
+              <p className="text-slate-11 text-base leading-relaxed">
+                {f.description}
               </p>
-            </GlassCard>
-          </div>
-        </section>
-
-        {/* What we offer */}
-        <section className="max-w-5xl mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
-              What StealthPay solves
-            </h2>
-            <p className="text-gray-600 text-lg max-w-2xl mx-auto">
-              A decentralized payment gateway on Aleo that keeps sender identity
-              and balances off the public ledger while giving merchants
-              cryptographic proof of payment.
-            </p>
-          </div>
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {features.map((f, i) => (
-              <div key={i}>
-                <GlassCard className="p-6 h-full flex flex-col">
-                  <h3 className="text-lg font-bold text-foreground mb-2">
-                    {f.title}
-                  </h3>
-                  <p className="text-gray-600 text-sm leading-relaxed flex-1">
-                    {f.description}
-                  </p>
-                </GlassCard>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* How it works */}
-        <section className="max-w-4xl mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
-              How it works
-            </h2>
-            <p className="text-gray-600 text-lg max-w-2xl mx-auto">
-              Create an invoice, get paid privately, receive proof—without
-              exposing who paid.
-            </p>
-          </div>
-          <div className="space-y-6">
-            {steps.map((s, i) => (
-              <div key={i}>
-                <GlassCard className="p-6 md:p-8 flex flex-row gap-6 items-start">
-                  <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-foreground text-white flex items-center justify-center font-bold text-lg">
-                    {s.step}
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold text-foreground mb-2">
-                      {s.title}
-                    </h3>
-                    <p className="text-gray-600 text-sm leading-relaxed">
-                      {s.text}
-                    </p>
-                  </div>
-                </GlassCard>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* CTA */}
-        <section className="flex flex-col items-center text-center pb-16">
-          <div>
-            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
-              Ready to pay with privacy?
-            </h2>
-            <p className="text-gray-600 text-lg mb-8 max-w-xl mx-auto">
-              Connect your Aleo wallet, create or pay an invoice, and verify
-              payments—all without exposing your identity on the public ledger.
-            </p>
-            <div className="flex flex-wrap gap-4 justify-center">
-              <Link to="/explorer">
-                <Button size="lg">Launch App</Button>
-              </Link>
-              <Link to="/privacy">
-                <Button variant="secondary" size="lg">
-                  How privacy works
-                </Button>
-              </Link>
-              <Link to="/verify">
-                <Button variant="outline" size="lg">
-                  Verify a payment
-                </Button>
-              </Link>
             </div>
-          </div>
-        </section>
-      </div>
+          ))}
+        </div>
+      </section>
+
+      {/* How it works - Compact & Premium */}
+      <section className="max-w-5xl mx-auto w-full space-y-12">
+        <div className="text-left space-y-4">
+          <h2 className="text-4xl md:text-6xl font-serif text-white tracking-tight">How it works</h2>
+          <p className="text-slate-11 text-lg max-w-xl">
+            From invoice creation to private settlement, every step balances 
+            privacy with verifiability.
+          </p>
+        </div>
+        
+        <div className="grid gap-6 md:grid-cols-2">
+          {steps.map((s, i) => (
+            <GlassCard key={i} className="p-8 border-white/5 hover:border-white/10 transition-all flex flex-col gap-6">
+              <div className="text-3xl font-serif italic text-white/20">0{s.step}</div>
+              <div className="space-y-2">
+                <h3 className="text-xl font-bold text-white">{s.title}</h3>
+                <p className="text-slate-11 leading-relaxed">{s.text}</p>
+              </div>
+            </GlassCard>
+          ))}
+        </div>
+      </section>
+
+      {/* Bottom CTA */}
+      <section className="max-w-4xl mx-auto w-full py-24 text-center border-t border-white/5">
+        <h2 className="text-5xl md:text-7xl font-serif text-white mb-12 tracking-tighter">
+          Ready to build <br /> with privacy?
+        </h2>
+        <div className="flex flex-wrap gap-4 justify-center">
+          <Link to="/explorer">
+            <Button size="lg" className="px-12 uppercase tracking-widest text-xs">Get Started</Button>
+          </Link>
+          <Link to="/verify">
+            <Button variant="outline" size="lg" className="px-12 uppercase tracking-widest text-xs">
+              Verify Transaction
+            </Button>
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }
+

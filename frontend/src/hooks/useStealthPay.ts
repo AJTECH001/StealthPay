@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet } from "@provablehq/aleo-wallet-adaptor-react";
 import {
   buildPaymentUrl,
@@ -16,10 +16,20 @@ const CREDITS_PROGRAM_ID = "credits.aleo";
 export type TxStatus = "idle" | "pending" | "success" | "error";
 
 export function useStealthPay() {
-  const { address, executeTransaction, requestRecords } = useWallet();
+  const { address, executeTransaction, requestRecords, transactionStatus } = useWallet();
   const [status, setStatus] = useState<TxStatus>("idle");
   const [txId, setTxId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [publicBalance, setPublicBalance] = useState<number | null>(null);
+  const [privateBalance, setPrivateBalance] = useState<number | null>(null);
+  const [recordError, setRecordError] = useState<string | null>(null);
+  const [pendingShieldAmount, setPendingShieldAmount] = useState<number>(0);
+  const recordsAccessDenied = useRef(false);
+
+  // Reset denial flag when address changes
+  useEffect(() => {
+    recordsAccessDenied.current = false;
+  }, [address]);
 
   const reset = useCallback(() => {
     setStatus("idle");
@@ -216,6 +226,8 @@ export function useStealthPay() {
         if (result?.transactionId) {
           setTxId(result.transactionId);
           setStatus("success");
+          // Optimistic update
+          setPendingShieldAmount((prev) => prev + amountMicrocredits / 1_000_000);
           return { transactionId: result.transactionId };
         }
 
@@ -284,17 +296,124 @@ export function useStealthPay() {
     [address, executeTransaction, requestRecords]
   );
 
+  const refreshBalances = useCallback(async () => {
+    if (!address || !requestRecords) {
+      console.log("refreshBalances: Wallet not connected or method missing");
+      return;
+    }
+
+    try {
+      // 1. Fetch Private Balance from unspent records
+      if (!recordsAccessDenied.current) {
+        try {
+          const isPermissionDenied = (e: unknown) =>
+            e instanceof Error && (e.message.includes("NOT_GRANTED") || e.message.includes("not granted") || e.message.includes("permission"));
+
+          let records: any[] = [];
+          try {
+            const fetched = await requestRecords("credits.aleo", true);
+            records = Array.isArray(fetched) ? fetched : [];
+            console.log("Found records:", records.length);
+          } catch (e) {
+            console.warn("Records request failed:", e);
+            if (isPermissionDenied(e)) throw e;
+            const fallbackFetched = await requestRecords("credits.aleo");
+            records = Array.isArray(fallbackFetched) ? fallbackFetched : [];
+          }
+
+          if (records.length > 0 || !recordError) {
+            console.log("Parsing private records...");
+            const totalMicroRaw = records.reduce((sum: number, rec: any) => {
+              try {
+                let micro = 0;
+                if (rec && typeof rec.microcredits === 'number') {
+                  micro = rec.microcredits;
+                } else if (rec && typeof rec.microcredits === 'string') {
+                  micro = parseInt(rec.microcredits.replace("u64", ""));
+                } else if (rec && rec.data && rec.data.microcredits) {
+                   const val = rec.data.microcredits;
+                   micro = typeof val === 'number' ? val : parseInt(val.toString().replace("u64", ""));
+                } else {
+                  const content = typeof rec === 'string' ? rec : JSON.stringify(rec);
+                  const match = content.match(/microcredits:\s*(\d+)u64/) || content.match(/"microcredits":\s*"(\d+)u64"/);
+                  micro = match ? parseInt(match[1]) : 0;
+                }
+                return sum + (isNaN(micro) ? 0 : micro);
+              } catch (err) {
+                console.error("Record parse error:", err, rec);
+                return sum;
+              }
+            }, 0);
+            console.log("Computed Private Balance:", totalMicroRaw / 1_000_000);
+            setPrivateBalance(totalMicroRaw / 1_000_000);
+            setRecordError(null);
+          }
+        } catch (recErr) {
+          const isDenied =
+            recErr instanceof Error &&
+            (recErr.message.includes("NOT_GRANTED") || recErr.message.includes("not granted") || recErr.message.includes("permission"));
+          if (isDenied) {
+            recordsAccessDenied.current = true;
+            setRecordError("Wallet record access not granted. Open Leo Wallet → Settings → allow record access.");
+          } else {
+            console.error("Shielded records fetching error:", recErr);
+            setRecordError("Failed to fetch shielded records.");
+          }
+          setPrivateBalance(null);
+        }
+      }
+
+      // 2. Fetch Public Balance from Aleo Mapping
+      const apiBases = [
+        "https://api.explorer.aleo.org/v1/testnet",
+        "https://api.explorer.provable.com/v1/testnet",
+        "https://api.explorer.aleo.org/v1/testnet3",
+      ];
+
+      let publicBalanceFound = false;
+      for (const base of apiBases) {
+        try {
+          const res = await fetch(`${base}/program/credits.aleo/mapping/account/${address}`);
+          if (res.ok) {
+            const publicMicroStr = await res.json(); 
+            if (publicMicroStr !== null) {
+              const publicMicro = parseInt(publicMicroStr.replace("u64", ""));
+              setPublicBalance(publicMicro / 1_000_000);
+              publicBalanceFound = true;
+              break;
+            }
+          }
+        } catch (e) {
+          console.warn(`Fetch from ${base} failed:`, e);
+        }
+      }
+
+      if (!publicBalanceFound) {
+        setPublicBalance(0);
+      }
+    } catch (err) {
+      console.error("Critical balance refresh error:", err);
+    }
+  }, [address, requestRecords, recordError]);
+
   return {
     createInvoice,
     payInvoice,
     settleInvoice,
     makePayment,
     convertPublicToPrivate,
+    refreshBalances,
+    publicBalance,
+    privateBalance,
+    recordError,
+    pendingShieldAmount,
+    setPendingShieldAmount,
     status,
     txId,
     error,
     reset,
     generateSalt,
     generatePaymentSecret,
+    transactionStatus,
   };
 }

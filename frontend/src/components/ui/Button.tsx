@@ -20,18 +20,19 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ) => {
     const variants = {
       primary:
-        "bg-gradient-to-r from-neon-primary to-neon-accent text-white font-bold border-none hover:shadow-[0_0_20px_rgba(0,0,0,0.25)]",
+        "bg-white text-black hover:bg-slate-12 transition-all duration-300 shadow-premium",
       secondary:
-        "bg-black/5 text-foreground border border-glass-border hover:bg-black/10 hover:border-glass-border-hover",
+        "bg-slate-3 text-white border border-glass-border hover:bg-slate-4 hover:border-glass-border-hover transition-all duration-300",
       outline:
-        "bg-transparent border border-neon-primary/50 text-neon-primary hover:bg-neon-primary/10",
-      ghost: "bg-transparent text-gray-500 hover:text-foreground hover:bg-black/5",
+        "bg-transparent border border-white/20 text-white hover:bg-white/5 hover:border-white/40 transition-all duration-300",
+      ghost: "bg-transparent text-slate-11 hover:text-white hover:bg-white/5 transition-all duration-300",
+      glass: "bg-glass-surface backdrop-blur-md border border-glass-border text-white hover:bg-glass-highlight hover:border-glass-border-hover transition-all duration-300",
     };
 
     const sizes = {
-      sm: "px-4 py-2 text-sm",
-      md: "px-6 py-3 text-base",
-      lg: "px-8 py-4 text-lg",
+      sm: "px-4 py-1.5 text-xs font-medium",
+      md: "px-6 py-2.5 text-sm font-semibold",
+      lg: "px-8 py-3.5 text-base font-bold tracking-tight",
     };
 
     return (
@@ -39,9 +40,9 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         type="button"
         className={cn(
-          "relative rounded-xl flex items-center justify-center gap-2 overflow-hidden",
-          variants[variant],
-          sizes[size],
+          "relative rounded-full flex items-center justify-center gap-2 overflow-hidden active:scale-[0.98] transition-transform",
+          variants[variant as keyof typeof variants] || variants.primary,
+          sizes[size as keyof typeof sizes] || sizes.md,
           className
         )}
         {...props}
