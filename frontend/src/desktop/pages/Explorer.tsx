@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { GlassCard } from "../../components/ui/GlassCard";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
@@ -44,7 +44,7 @@ export default function Explorer() {
   const [shieldingTokenType, setShieldingTokenType] = useState(0); // 0 for Credits, 1 for USDCx
   const [directTokenType, setDirectTokenType] = useState(0); // 0 for Credits, 1 for USDCx
 
-  const [lastSettledCount, setLastSettledCount] = useState<number | null>(null);
+  const lastSettledCountRef = useRef<number | null>(null);
   const [notification, setNotification] = useState<{ message: string; type: "success" | "info" } | null>(null);
 
   useEffect(() => {
@@ -80,18 +80,18 @@ export default function Explorer() {
         }
 
         if (!cancelled) {
-          // Check for new settlements
-          if (lastSettledCount !== null && statsRes.settled > lastSettledCount) {
+          // Check for new settlements using ref to avoid re-triggering the effect
+          if (lastSettledCountRef.current !== null && statsRes.settled > lastSettledCountRef.current) {
             setNotification({
-              message: `New Payment Received! (${statsRes.settled - lastSettledCount} new)`,
+              message: `New Payment Received! (${statsRes.settled - lastSettledCountRef.current} new)`,
               type: "success"
             });
             setTimeout(() => setNotification(null), 5000);
           }
+          lastSettledCountRef.current = statsRes.settled;
 
           setStats(statsRes);
           setRecentInvoices(invoicesRes);
-          setLastSettledCount(statsRes.settled);
           setApiError(null);
         }
       } catch (err) {
@@ -102,7 +102,7 @@ export default function Explorer() {
     }
 
     fetchData();
-    
+
     // Set up polling interval for real-time updates
     const pollInterval = setInterval(fetchData, 8000);
 
@@ -110,11 +110,11 @@ export default function Explorer() {
       refreshBalances();
     }
 
-    return () => { 
-      cancelled = true; 
+    return () => {
+      cancelled = true;
       clearInterval(pollInterval);
     };
-  }, [address, refreshBalances, lastSettledCount]);
+  }, [address, refreshBalances]);
 
   // Poll for final tx hash for direct payments
   // Real Aleo tx IDs start with "at1". Leo wallet returns UUIDs (contain "-"),

@@ -178,15 +178,20 @@ app.get('/api/invoices/stats', async (req, res) => {
         const settledResult = await pool.query(
             "SELECT COUNT(*)::int as count FROM invoices WHERE status = 'SETTLED'"
         );
-        const merchantsResult = await pool.query(
-            'SELECT COUNT(DISTINCT merchant_address)::int as count FROM invoices'
+        // merchant_address is AES-GCM encrypted with a random IV, so COUNT(DISTINCT ...) on
+        // the ciphertext counts every row as unique. Decrypt in JS to get the real unique count.
+        const merchantsResult = await pool.query('SELECT merchant_address FROM invoices');
+        const uniqueMerchants = new Set(
+            (merchantsResult.rows || [])
+                .map(r => decrypt(r.merchant_address))
+                .filter(Boolean)
         );
 
         res.json({
             total: totalResult.rows[0]?.count ?? 0,
             pending: pendingResult.rows[0]?.count ?? 0,
             settled: settledResult.rows[0]?.count ?? 0,
-            merchants: merchantsResult.rows[0]?.count ?? 0,
+            merchants: uniqueMerchants.size,
         });
     } catch (error) {
         console.error('Error fetching stats:', error);

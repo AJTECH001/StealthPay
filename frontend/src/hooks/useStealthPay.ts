@@ -588,7 +588,7 @@ export function useStealthPay() {
     } catch (err) {
       console.error("Critical balance refresh error:", err);
     }
-  }, [address, requestRecords, recordError]);
+  }, [address, requestRecords]);
 
   return {
     createInvoice,
