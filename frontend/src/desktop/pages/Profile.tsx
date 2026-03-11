@@ -147,7 +147,7 @@ export default function Profile() {
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-[10px] text-slate-5 font-bold uppercase tracking-widest">Network</span>
-                    <span className="text-[10px] text-white">Aleo Mainnet</span>
+                    <span className="text-[10px] text-white">Aleo Testnet</span>
                   </div>
                 </div>
               </GlassCard>
@@ -225,7 +225,9 @@ export default function Profile() {
                         >
                           <div className="space-y-1.5">
                             <div className="flex items-center gap-3">
-                              <span className="text-sm font-bold text-white tracking-tight">{inv.amount} CREDITS</span>
+                              <span className="text-sm font-bold text-white tracking-tight">
+                              {inv.amount} {inv.invoice_type === 1 ? 'USDCx' : 'CREDITS'}
+                            </span>
                               <span className={`text-[9px] uppercase tracking-widest font-bold px-2 py-0.5 rounded-full border ${
                                 inv.status === 'SETTLED'
                                 ? 'bg-green-500/10 text-green-400 border-green-500/20'

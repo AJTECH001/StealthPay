@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 
 const sections = [
   {
-    title: "Program: stealthpay.aleo",
+    title: "Program: stealthpay_usdcx_v2.aleo",
     desc: "The core protocol logic deployed on Aleo. Handles private commitments, shielded transfers, and receipt generation.",
     code: null
   },

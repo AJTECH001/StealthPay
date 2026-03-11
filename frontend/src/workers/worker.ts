@@ -63,7 +63,7 @@ async function payPrivate({ apiUrl, payerPrivateKey, recipientAddress, amountCre
 }
 
 /**
- * Execute stealthpay.aleo/make_payment - private payment with merchant receipt.
+ * Execute stealthpay_usdcx.aleo/make_payment - private payment with merchant receipt.
  * Use this for StealthPay flow (Payment record created for merchant).
  */
 async function makeStealthPayment({ apiUrl, payerPrivateKey, merchantAddress, amountCredits, priorityFee = 0.0, privateFee = true }) {
@@ -82,7 +82,7 @@ async function makeStealthPayment({ apiUrl, payerPrivateKey, merchantAddress, am
   const inputs = [`${amountMicrocredits}u64`, merchantAddress];
 
   return await programManager.execute({
-    programName: "stealthpay.aleo",
+    programName: "stealthpay_usdcx_v2.aleo",
     functionName: "make_payment",
     priorityFee,
     privateFee,

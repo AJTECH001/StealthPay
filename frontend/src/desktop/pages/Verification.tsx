@@ -7,9 +7,11 @@ import { motion, AnimatePresence } from "framer-motion";
 
 export default function Verification() {
   const [txId, setTxId] = useState("");
-  const [secret, setSecret] = useState("");
+  const [txIdForProof, setTxIdForProof] = useState("");
   const [salt, setSalt] = useState("");
   const [status, setStatus] = useState<"IDLE" | "CHECKING" | "VALID" | "INVALID">("IDLE");
+  const [verifiedAmount, setVerifiedAmount] = useState<number | null>(null);
+  const [verifiedToken, setVerifiedToken] = useState<string>("Credits");
 
   const handleVerifyByTxId = () => {
     const trimmed = txId.trim();
@@ -17,12 +19,52 @@ export default function Verification() {
     window.open(getExplorerTxUrl(trimmed), "_blank");
   };
 
-  const handleVerifyBySecret = async () => {
-    if (!secret || !salt) return;
+  const handleVerifyProof = async () => {
+    if (!txIdForProof || !salt) return;
     setStatus("CHECKING");
-    await new Promise((r) => setTimeout(r, 1200));
-    // Implementation mock for advanced verification
-    setStatus(secret.length > 5 && salt.length > 5 ? "VALID" : "INVALID");
+    setVerifiedAmount(null);
+    try {
+      const res = await fetch(`https://api.explorer.provable.com/v1/testnet/transaction/${txIdForProof}`);
+      if (!res.ok) throw new Error("Transaction not found");
+      const data = await res.json();
+      
+      let foundMatchingSalt = false;
+      let amountFound = 0;
+      
+      if (data.execution && data.execution.transitions) {
+        for (const transition of data.execution.transitions) {
+          const isStealthPay = transition.program === "stealthpay_usdcx_v2.aleo";
+          if (isStealthPay && transition.function === "finalize_pay_invoice") {
+            // New signature: [salt, amount, merchant, token_type] (indices 0, 1, 2, 3)
+            // Old signature (if applicable): maybe salt was at index 1? 
+            // We check if salt matches at index 0 or 1.
+            const s0 = transition.inputs[0]?.value;
+            const s1 = transition.inputs[1]?.value;
+            
+            if (s0 === salt || s1 === salt) {
+              foundMatchingSalt = true;
+              const isNewSign = s0 === salt;
+              const amountRaw = isNewSign ? transition.inputs[1]?.value : transition.inputs[3]?.value;
+              const typeRaw = isNewSign ? transition.inputs[3]?.value : "0u8";
+              
+              amountFound = parseInt(amountRaw.replace("u64", "").replace("u128", "")) / 1_000_000;
+              setVerifiedToken(typeRaw === "1u8" ? "USDCx" : "Credits");
+              break;
+            }
+          }
+        }
+      }
+      
+      if (foundMatchingSalt) {
+        setVerifiedAmount(amountFound);
+        setStatus("VALID");
+      } else {
+        setStatus("INVALID");
+      }
+    } catch (err) {
+      console.error("Verification error:", err);
+      setStatus("INVALID");
+    }
   };
 
   return (
@@ -86,18 +128,19 @@ export default function Verification() {
             <GlassCard className="h-full p-10 flex flex-col gap-8">
               <div className="space-y-2">
                 <h2 className="text-2xl font-bold text-white tracking-tight">Proof Validation</h2>
-                <p className="text-slate-11 text-sm">Verify shielded payments using the payment secret and invoice salt.</p>
+                <p className="text-slate-11 text-sm">Verify shielded payments by matching the transaction payload with the invoice salt.</p>
               </div>
 
               <div className="space-y-6">
                 <Input
-                  label="Payment Secret"
-                  value={secret}
+                  label="Transaction ID"
+                  value={txIdForProof}
                   onChange={(e) => {
-                    setSecret(e.target.value);
+                    setTxIdForProof(e.target.value);
                     setStatus("IDLE");
+                    setVerifiedAmount(null);
                   }}
-                  placeholder="Enter secret..."
+                  placeholder="at1..."
                 />
                 <Input
                   label="Invoice Salt"
@@ -112,20 +155,28 @@ export default function Verification() {
                 <div className="space-y-4">
                   <Button 
                     variant="secondary"
-                    onClick={handleVerifyBySecret} 
-                    disabled={status === "CHECKING" || !secret || !salt} 
+                    onClick={handleVerifyProof} 
+                    disabled={status === "CHECKING" || !txIdForProof || !salt} 
                     className="w-full text-xs uppercase tracking-widest py-4"
                   >
-                    {status === "CHECKING" ? "Validating..." : "Verify Proof"}
+                    {status === "CHECKING" ? "Querying Ledger..." : "Verify Proof"}
                   </Button>
                   
                   <AnimatePresence>
                     {status === "VALID" && (
                       <motion.div 
                         initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                        className="p-4 rounded-xl bg-green-500/5 border border-green-500/10 text-center"
+                        className="p-6 rounded-xl bg-green-500/5 border border-green-500/20 text-center space-y-2"
                       >
-                        <p className="text-[10px] text-green-400 font-bold uppercase tracking-widest">Receipt Authenticated ✓</p>
+                        <div className="w-10 h-10 mx-auto rounded-full bg-green-500/10 flex items-center justify-center">
+                          <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                        </div>
+                        <p className="text-xs text-green-400 font-bold uppercase tracking-widest">Receipt Authenticated</p>
+                        <p className="text-2xl font-serif italic text-white flex justify-center items-baseline gap-2">
+                          {verifiedAmount !== null ? verifiedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
+                          <span className="text-sm font-sans not-italic text-slate-11 uppercase tracking-widest font-medium">{verifiedToken}</span>
+                        </p>
+                        <p className="text-[10px] text-slate-11">Cryptographically proven on-chain</p>
                       </motion.div>
                     )}
                     {status === "INVALID" && (
@@ -137,6 +188,21 @@ export default function Verification() {
                       </motion.div>
                     )}
                   </AnimatePresence>
+                  {txIdForProof && txIdForProof.startsWith("at1") && (
+                    <div className="p-4 rounded-xl bg-white/5 border border-white/10 overflow-hidden text-center">
+                      <p className="text-xs text-slate-11 mb-2">View on Explorer</p>
+                      <a
+                        href={`https://testnet.explorer.provable.com/transaction/${txIdForProof}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block"
+                      >
+                        <Button variant="secondary" className="w-full text-[10px] uppercase tracking-widest h-8">
+                          View Complete Record →
+                        </Button>
+                      </a>
+                    </div>
+                  )}
                 </div>
               </div>
             </GlassCard>

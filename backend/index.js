@@ -11,6 +11,12 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Simple request logger
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    next();
+});
+
 const databaseUrl = process.env.DATABASE_URL;
 
 if (!databaseUrl) {
@@ -81,6 +87,30 @@ app.get('/api/invoices/merchant/:address', async (req, res) => {
         res.json(merchantInvoices);
     } catch (error) {
         console.error('Error fetching invoices:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/invoices/payer/:address', async (req, res) => {
+    const { address } = req.params;
+
+    try {
+        const result = await pool.query(
+            'SELECT * FROM invoices ORDER BY created_at DESC LIMIT 200'
+        );
+        const rows = result.rows;
+
+        const payerInvoices = (rows || [])
+            .map(inv => ({
+                ...inv,
+                merchant_address: decrypt(inv.merchant_address),
+                payer_address: decrypt(inv.payer_address),
+            }))
+            .filter(inv => inv.payer_address === address);
+
+        res.json(payerInvoices);
+    } catch (error) {
+        console.error('Error fetching payer invoices:', error);
         res.status(500).json({ error: error.message });
     }
 });

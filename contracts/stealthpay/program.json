@@ -1,5 +1,5 @@
 {
-  "program": "stealthpay.aleo",
+  "program": "stealthpay_usdcx_v2.aleo",
   "version": "0.0.0",
   "description": "",
   "license": "MIT",
@@ -7,9 +7,13 @@
   "dependencies": [
     {
       "name": "credits.aleo",
-      "location": "network",
-      "path": null,
-      "edition": null
+      "network": "testnet",
+      "location": "network"
+    },
+    {
+      "name": "test_usdcx_stablecoin.aleo",
+      "network": "testnet",
+      "location": "network"
     }
   ],
   "dev_dependencies": null

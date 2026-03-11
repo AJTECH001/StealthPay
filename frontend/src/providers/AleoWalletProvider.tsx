@@ -12,7 +12,10 @@ interface AleoWalletProviderProps {
 }
 
 function createPatchedShieldAdapter(appName: string): ShieldWalletAdapter {
-  const adapter = new ShieldWalletAdapter({ appName });
+  const adapter = new ShieldWalletAdapter({ 
+    appName,
+    programs: ["credits.aleo", "stealthpay_usdcx_v2.aleo", "test_usdcx_stablecoin.aleo"]
+  });
 
   // The Shield extension validates `network` strictly against its enum values.
   // Network.TESTNET = "testnet" is correct — the extension maps this internally.
@@ -30,12 +33,8 @@ function createPatchedShieldAdapter(appName: string): ShieldWalletAdapter {
       ? Math.max(1, Math.round(options.fee * 1_000_000))
       : 1000;
     const cleanOptions = {
-      program: options.program,
-      function: options.function,
-      inputs: options.inputs,
+      ...options,
       fee: feeMicrocredits,
-      ...(options.privateFee !== undefined && { privateFee: options.privateFee }),
-      ...(options.recordIndices !== undefined && { recordIndices: options.recordIndices }),
     };
     return await originalExecute(cleanOptions);
   };
@@ -51,9 +50,34 @@ function createPatchedLeoAdapter(appName: string): LeoWalletAdapter {
   const adapter = new LeoWalletAdapter({ 
     appName,
     programIdPermissions: {
-      "testnetbeta": ["credits.aleo", "stealthpay.aleo"]
+      "testnetbeta": ["credits.aleo", "stealthpay_usdcx_v2.aleo", "test_usdcx_stablecoin.aleo"],
+      "testnet": ["credits.aleo", "stealthpay_usdcx_v2.aleo", "test_usdcx_stablecoin.aleo"]
     }
   });
+  // Patch requestRecords: newer Leo Wallet versions return a plain array []
+  // but the adapter expects { records: [...] } and does result?.records, giving [].
+  const originalRequestRecords = adapter.requestRecords.bind(adapter);
+  (adapter as any).requestRecords = async function (
+    program: string,
+    includePlaintext?: boolean
+  ) {
+    const result = await originalRequestRecords(program, includePlaintext ?? false);
+    if (result.length > 0) return result;
+
+    // Fallback: call the extension directly and handle both shapes
+    const leoWin = (window as any).leoWallet ?? (window as any).leo;
+    if (!leoWin) return result;
+    try {
+      const raw = includePlaintext
+        ? await leoWin.requestRecordPlaintexts?.(program)
+        : await leoWin.requestRecords?.(program);
+      // Leo Wallet may return { records: [...] } or just [...]
+      return raw?.records ?? (Array.isArray(raw) ? raw : result);
+    } catch {
+      return result;
+    }
+  };
+
   const originalConnect = adapter.connect.bind(adapter);
 
   (adapter as any).connect = async function (
@@ -89,6 +113,21 @@ function createPatchedLeoAdapter(appName: string): LeoWalletAdapter {
       throw err;
     }
   };
+  
+  const originalExecute = adapter.executeTransaction.bind(adapter);
+  (adapter as any).executeTransaction = async function (options: any) {
+    // Pass only fields defined in TransactionOptions + network
+    // Extra fields like `address`, `publicKey`, `chainId` confuse extension validators.
+    // Fee must be a positive integer in microcredits.
+    const feeMicrocredits = options.fee
+      ? Math.max(1, Math.round(options.fee * 1_000_000))
+      : 1000;
+    const cleanOptions = {
+      ...options,
+      fee: feeMicrocredits,
+    };
+    return await originalExecute(cleanOptions);
+  };
 
   return adapter;
 }
@@ -105,10 +144,14 @@ export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
   return (
     <ProvableWalletProvider
       wallets={wallets}
-      decryptPermission={DecryptPermission.OnChainHistory}
+      decryptPermission={DecryptPermission.AutoDecrypt}
       network={Network.TESTNET}
       autoConnect
-      programs={["credits.aleo", "stealthpay.aleo"]}
+      programs={[
+        "credits.aleo", 
+        "stealthpay_usdcx_v2.aleo", 
+        "test_usdcx_stablecoin.aleo"
+      ]}
     >
       <WalletModalProvider>{children}</WalletModalProvider>
     </ProvableWalletProvider>

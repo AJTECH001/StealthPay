@@ -4,7 +4,7 @@ import { Button } from "../../components/ui/Button";
 import { useWallet } from "@provablehq/aleo-wallet-adaptor-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useStealthPay } from "../../hooks/useStealthPay";
-import { toMicrocredits, getExplorerTxUrl } from "../../services/stealthpay";
+import { toMicrocredits, getExplorerTxUrl, getExplorerAddressUrl } from "../../services/stealthpay";
 import { api } from "../../services/api";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -12,13 +12,17 @@ function VerificationBlock({
   txId,
   title,
   description,
+  payerAddress,
 }: {
   txId: string;
   title: string;
   description?: string;
+  payerAddress?: string;
 }) {
   const [copied, setCopied] = useState(false);
-  const explorerUrl = getExplorerTxUrl(txId);
+  const isFinalized = txId.startsWith("at1");
+  const explorerUrl = isFinalized ? getExplorerTxUrl(txId) : null;
+  const addressUrl = payerAddress ? getExplorerAddressUrl(payerAddress) : null;
 
   const copyTxId = () => {
     navigator.clipboard.writeText(txId);
@@ -30,15 +34,15 @@ function VerificationBlock({
     <div className="rounded-2xl bg-white/[0.02] border border-white/5 p-6 space-y-4">
       <div className="space-y-1">
         <p className="text-sm font-bold text-white tracking-tight">{title}</p>
-        {!txId.startsWith("at1") ? (
+        {!txId.startsWith("at1") && !txId.includes("Completed") ? (
           <p className="text-[10px] text-amber-500 font-bold uppercase tracking-widest animate-pulse">Finalizing on Aleo Ledger...</p>
         ) : description && (
           <p className="text-xs text-slate-11">{description}</p>
         )}
       </div>
-      
+
       <div className="flex items-center gap-3 p-3 bg-black/40 rounded-xl border border-white/5">
-        <code className="text-[10px] font-mono text-slate-5 break-all flex-1">
+        <code className={`text-[10px] font-mono break-all flex-1 ${txId.includes("Completed") ? "text-green-400" : "text-slate-5"}`}>
           {txId}
         </code>
         <Button
@@ -51,18 +55,19 @@ function VerificationBlock({
         </Button>
       </div>
 
-      {txId.startsWith("at1") && (
-        <a
-          href={explorerUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block"
-        >
+      {isFinalized && explorerUrl ? (
+        <a href={explorerUrl} target="_blank" rel="noopener noreferrer" className="block">
           <Button variant="secondary" className="w-full text-[10px] uppercase tracking-widest py-3">
             Explore On-Chain →
           </Button>
         </a>
-      )}
+      ) : addressUrl ? (
+        <a href={addressUrl} target="_blank" rel="noopener noreferrer" className="block">
+          <Button variant="ghost" className="w-full text-[10px] uppercase tracking-widest py-3 border border-white/10">
+            View My Transactions →
+          </Button>
+        </a>
+      ) : null}
     </div>
   );
 }
@@ -84,8 +89,10 @@ export default function PaymentPage() {
   const merchant = searchParams.get("merchant");
   const amountStr = searchParams.get("amount");
   const salt = searchParams.get("salt");
+  const token = searchParams.get("token");
 
   const hasParams = merchant && amountStr && salt;
+  const tokenType = token === 'usdcx' ? 1 : 0;
 
   const amountCredits = hasParams ? parseFloat(amountStr) : 0;
   const amountMicrocredits = hasParams ? toMicrocredits(amountCredits) : 0;
@@ -107,6 +114,38 @@ export default function PaymentPage() {
       return null;
     }
   });
+
+  const [isAlreadyPaid, setIsAlreadyPaid] = useState(false);
+  const [loadingInvoice, setLoadingInvoice] = useState(true);
+
+  // Check if invoice is already paid on mount
+  useEffect(() => {
+    if (!hasParams || !merchant || !salt) {
+      setLoadingInvoice(false);
+      return;
+    }
+    
+    let cancelled = false;
+    const checkStatus = async () => {
+      try {
+        const invoice = await api.getInvoiceBySalt(salt, amountCredits);
+        if (!cancelled) {
+          if (invoice.status === "SETTLED") {
+            setIsAlreadyPaid(true);
+            if (invoice.payment_tx_ids && !paymentResult) {
+              setPaymentResult({ transactionId: Array.isArray(invoice.payment_tx_ids) ? invoice.payment_tx_ids[0] : invoice.payment_tx_ids });
+            }
+          }
+          setLoadingInvoice(false);
+        }
+      } catch (err) {
+        if (!cancelled) setLoadingInvoice(false);
+      }
+    };
+    
+    checkStatus();
+    return () => { cancelled = true; };
+  }, [hasParams, merchant, salt, amountCredits, paymentResult]);
   const [convertResult, setConvertResult] = useState<{
     transactionId: string;
   } | null>(null);
@@ -146,7 +185,7 @@ export default function PaymentPage() {
     return () => { cancelled = true; };
   }, [paymentResult, hasParams, merchant, salt, amountCredits, address, backendSyncStatus]);
 
-  // Poll for final on-chain transaction hash if only UUID is known
+  // Poll for final on-chain transaction hash if only a temporary ID is known
   useEffect(() => {
     // Poll while ID is temporary (Leo wallet: UUID with "-", Shield wallet: "shield_XXX")
     // Real on-chain Aleo tx IDs always start with "at1"
@@ -160,7 +199,7 @@ export default function PaymentPage() {
         console.log("Polling for final tx hash for request:", paymentResult.transactionId);
         const res = await transactionStatus?.(paymentResult.transactionId);
         
-        if (res && res.transactionId && res.transactionId.startsWith("at1")) {
+        if (res && res.transactionId && res.transactionId !== paymentResult.transactionId && res.transactionId.startsWith("at1")) {
           console.log("Observed final tx hash:", res.transactionId);
           if (cancelled) return;
 
@@ -179,6 +218,13 @@ export default function PaymentPage() {
           }
           return; // Stop polling
         }
+        
+        // Shield Wallet fallback: It returns status "Completed" but keeps the "shield_" ID
+        if (res?.status === "Completed" && res?.transactionId?.startsWith("shield_")) {
+          if (cancelled) return;
+          setPaymentResult({ transactionId: "Completed - Confirmed by Shield Wallet" });
+          return; // Stop polling
+        }
       } catch (err) {
         console.warn("Polling error:", err);
       }
@@ -195,15 +241,16 @@ export default function PaymentPage() {
     };
   }, [paymentResult?.transactionId, address, merchant, salt, amountCredits, hasParams, transactionStatus]);
 
+  const isWalletSyncing = error === "wallet_syncing";
   const needsPrivateConversion =
-    error?.includes("No credits records") ?? false;
+    !isWalletSyncing &&
+    (error?.includes("No credits records") || error?.includes("No USDCx records"));
   const convertAmount = Math.max(amountCredits + 0.05, 0.25);
-  const convertAmountMicrocredits = toMicrocredits(convertAmount);
 
   const handleConvertToPrivate = async () => {
     reset();
     setConvertResult(null);
-    const result = await convertPublicToPrivate(convertAmountMicrocredits);
+    const result = await convertPublicToPrivate(convertAmount);
     if (result?.transactionId) {
       setConvertResult({ transactionId: result.transactionId });
     }
@@ -225,6 +272,7 @@ export default function PaymentPage() {
       amountMicrocredits,
       salt,
       paymentSecret,
+      tokenType,
     });
 
     const txId = result?.transactionId ?? (result as { id?: string })?.id ?? hookTxId;
@@ -277,7 +325,45 @@ export default function PaymentPage() {
         >
           <GlassCard className="p-10">
             <AnimatePresence mode="wait">
-              {!hasParams ? (
+              {loadingInvoice ? (
+                <motion.div 
+                  key="loading"
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                  className="py-12 flex flex-col items-center justify-center space-y-4"
+                >
+                  <div className="w-8 h-8 rounded-full border-2 border-white/10 border-t-white animate-spin" />
+                  <p className="text-slate-11 text-xs uppercase tracking-widest font-bold">Verifying Invoice...</p>
+                </motion.div>
+              ) : isAlreadyPaid ? (
+                <motion.div 
+                  key="already-paid"
+                  initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+                  className="space-y-8"
+                >
+                  <div className="p-8 rounded-3xl bg-blue-500/[0.03] border border-blue-500/10 text-center space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20 mx-auto mb-2">
+                       <svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    </div>
+                    <h2 className="text-2xl font-bold text-white tracking-tight">Invoice Settled</h2>
+                    <p className="text-sm text-slate-11">This invoice has already been paid and verified on the Aleo ledger.</p>
+                  </div>
+                  
+                  {paymentResult && (
+                    <VerificationBlock
+                      txId={paymentResult.transactionId}
+                      title="Payment Record"
+                      description="On-chain receipt for this invoice."
+                      payerAddress={address ?? undefined}
+                    />
+                  )}
+
+                  <div className="pt-4">
+                    <Link to="/explorer" className="w-full">
+                      <Button variant="ghost" className="w-full text-xs uppercase tracking-widest">Return to Dashboard</Button>
+                    </Link>
+                  </div>
+                </motion.div>
+              ) : !hasParams ? (
                 <motion.div 
                   key="no-params"
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }}
@@ -309,7 +395,7 @@ export default function PaymentPage() {
                        <svg className="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
                     </div>
                     <h2 className="text-2xl font-bold text-white tracking-tight">Payment Broadcasted</h2>
-                    <p className="text-sm text-slate-11">Your payment of <span className="text-white font-medium">{amountCredits} credits</span> is being finalized on-chain.</p>
+                    <p className="text-sm text-slate-11">Your payment of <span className="text-white font-medium">{amountCredits} {tokenType === 1 ? 'USDCx' : 'credits'}</span> is being finalized on-chain.</p>
                   </div>
 
                   {backendSyncStatus === "success" && (
@@ -323,6 +409,7 @@ export default function PaymentPage() {
                     txId={paymentResult.transactionId}
                     title="Transaction Receipt"
                     description="This identifier proves your credits were transferred within the zero-knowledge circuit."
+                    payerAddress={address ?? undefined}
                   />
 
                   <div className="pt-4 flex flex-col gap-4">
@@ -347,7 +434,9 @@ export default function PaymentPage() {
                     <div className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 flex justify-between items-center">
                       <div className="space-y-1">
                         <span className="text-[10px] text-slate-5 font-bold uppercase tracking-widest">Order Total</span>
-                        <div className="text-3xl font-serif italic text-white">{amountCredits} Credits</div>
+                        <div className={`text-3xl font-serif italic ${tokenType === 1 ? 'text-blue-400' : 'text-white'}`}>
+                          {amountCredits} {tokenType === 1 ? 'USDCx' : 'Credits'}
+                        </div>
                       </div>
                       <div className="text-right space-y-1">
                          <span className="text-[10px] text-slate-5 font-bold uppercase tracking-widest">Recipient</span>
@@ -355,9 +444,22 @@ export default function PaymentPage() {
                       </div>
                     </div>
 
-                    {error && (
+                    {error && !isWalletSyncing && !needsPrivateConversion && (
                       <div className="p-4 rounded-2xl bg-red-500/5 border border-red-500/10">
-                        <p className="text-xs text-red-400 font-medium">Network Error: {error}</p>
+                        <p className="text-xs text-red-400 font-medium">Error: {error}</p>
+                      </div>
+                    )}
+
+                    {isWalletSyncing && (
+                      <div className="p-6 rounded-3xl bg-amber-500/[0.03] border border-amber-500/10 space-y-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-4 h-4 rounded-full border-2 border-amber-500/40 border-t-amber-500 animate-spin shrink-0" />
+                          <p className="text-sm font-bold text-white">Shielded Balance Syncing</p>
+                        </div>
+                        <p className="text-xs text-slate-11 leading-relaxed">
+                          Your shielded balance exists but Leo Wallet is still scanning the block.
+                          Open the Leo Wallet extension to speed up sync, then tap <span className="text-white font-semibold">Confirm &amp; Pay</span> again.
+                        </p>
                       </div>
                     )}
 
@@ -368,8 +470,12 @@ export default function PaymentPage() {
                              <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                           </div>
                           <div className="space-y-1">
-                            <p className="text-sm font-bold text-white">Private Balance Required</p>
-                            <p className="text-xs text-slate-11">Shielded transactions require pre-converted credits. Tap below to convert public funds.</p>
+                            <p className="text-sm font-bold text-white">Private {tokenType === 1 ? 'USDCx' : 'Balance'} Required</p>
+                            <p className="text-xs text-slate-11">
+                              {tokenType === 1 
+                                ? "Shielded USDCx is required for payment. Please bridge or mint USDCx to your private balance."
+                                : "Shielded transactions require pre-converted credits. Tap below to convert public funds."}
+                            </p>
                           </div>
                         </div>
 

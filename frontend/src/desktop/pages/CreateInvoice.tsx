@@ -7,6 +7,8 @@ import { useStealthPay } from "../../hooks/useStealthPay";
 import { toMicrocredits } from "../../services/stealthpay";
 import { api } from "../../services/api";
 import { motion, AnimatePresence } from "framer-motion";
+import { USDCxInfo } from "../components/USDCxInfo";
+
 
 export default function CreateInvoice() {
   const { address } = useWallet();
@@ -21,12 +23,14 @@ export default function CreateInvoice() {
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
   const [isMultiPay, setIsMultiPay] = useState(false);
+  const [tokenType, setTokenType] = useState(0); // 0 = Credits, 1 = USDCx
   const [invoiceResult, setInvoiceResult] = useState<{
     paymentUrl: string;
     invoiceHash?: string;
     salt?: string;
     amount?: number;
     isMultiPay?: boolean;
+    tokenType?: number;
   } | null>(null);
 
   const handleCreate = async () => {
@@ -48,12 +52,13 @@ export default function CreateInvoice() {
       salt,
       expiryHours: 24,
       invoiceType,
+      tokenType,
     });
 
     if (result?.paymentUrl) {
       try {
         await api.createInvoice({
-          invoice_hash: salt,
+          invoice_hash: result.transactionId,
           merchant_address: address!,
           amount: amountNum,
           memo: memo || undefined,
@@ -71,6 +76,7 @@ export default function CreateInvoice() {
         salt,
         amount: amountNum,
         isMultiPay,
+        tokenType,
       });
     }
   };
@@ -98,7 +104,7 @@ export default function CreateInvoice() {
             transition={{ delay: 0.1 }}
             className="text-slate-11 text-lg max-w-xl"
           >
-            Generate a secure, private payment link to receive credits on Aleo.
+            Generate a secure, private payment link to receive {tokenType === 1 ? 'USDCx stablecoin' : 'Aleo credits'} privately.
           </motion.p>
         </header>
 
@@ -138,9 +144,9 @@ export default function CreateInvoice() {
                     </Button>
                   </div>
 
-                  <div className="flex items-center gap-3 p-4 rounded-xl bg-green-500/5 border border-green-500/10">
+                   <div className="flex items-center gap-3 p-4 rounded-xl bg-green-500/5 border border-green-500/10">
                     <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                    <p className="text-sm text-green-400 font-medium tracking-tight">Invoice broadcast success. Link is live.</p>
+                    <p className="text-sm text-green-400 font-medium tracking-tight">Invoice broadcast success. Link is live for {invoiceResult.tokenType === 1 ? 'USDCx' : 'Credits'}.</p>
                   </div>
 
                   {invoiceResult.isMultiPay && (
@@ -186,9 +192,36 @@ export default function CreateInvoice() {
                   exit={{ opacity: 0 }}
                   className="space-y-8"
                 >
-                  <div className="space-y-6">
+                   <div className="space-y-6">
+                    <div className="grid grid-cols-2 gap-4">
+                      <button
+                        type="button"
+                        onClick={() => setTokenType(0)}
+                        className={`p-4 rounded-2xl border transition-all text-center ${
+                          tokenType === 0 
+                            ? "bg-white/10 border-white/20 text-white" 
+                            : "bg-white/[0.02] border-white/5 text-slate-500"
+                        }`}
+                      >
+                        <span className="block text-xs font-bold uppercase tracking-widest mb-1">Aleo</span>
+                        <span className="text-sm">Credits</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTokenType(1)}
+                        className={`p-4 rounded-2xl border transition-all text-center ${
+                          tokenType === 1 
+                            ? "bg-blue-500/10 border-blue-500/30 text-blue-400" 
+                            : "bg-white/[0.02] border-white/5 text-slate-500"
+                        }`}
+                      >
+                        <span className="block text-xs font-bold uppercase tracking-widest mb-1">USDCx</span>
+                        <span className="text-sm">Stablecoin</span>
+                      </button>
+                    </div>
+
                     <Input
-                      label="Amount (credits)"
+                      label={`Amount (${tokenType === 1 ? 'USDCx' : 'credits'})`}
                       type="number"
                       placeholder="0.00"
                       value={amount}
@@ -237,9 +270,18 @@ export default function CreateInvoice() {
               )}
             </AnimatePresence>
           </GlassCard>
-        </motion.div>
+         </motion.div>
+         
+         {tokenType === 1 && !invoiceResult && (
+           <motion.div
+             initial={{ opacity: 0 }}
+             animate={{ opacity: 1 }}
+             className="mt-12"
+           >
+             <USDCxInfo />
+           </motion.div>
+         )}
       </div>
     </div>
   );
 }
-

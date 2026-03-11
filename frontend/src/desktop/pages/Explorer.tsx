@@ -6,7 +6,6 @@ import { Link } from "react-router-dom";
 import { useWallet } from "@provablehq/aleo-wallet-adaptor-react";
 import { useStealthPay } from "../../hooks/useStealthPay";
 import { api, type InvoiceStats, type Invoice } from "../../services/api";
-import { toMicrocredits } from "../../services/stealthpay";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function Explorer() {
@@ -19,9 +18,13 @@ export default function Explorer() {
     refreshBalances, 
     publicBalance, 
     privateBalance,
+    usdcxPublicBalance,
+    usdcxPrivateBalance,
     recordError,
     pendingShieldAmount,
     setPendingShieldAmount,
+    pendingUsdcxAmount,
+    setPendingUsdcxAmount,
     convertPublicToPrivate,
     transactionStatus
   } = useStealthPay();
@@ -38,17 +41,57 @@ export default function Explorer() {
   const [recentInvoices, setRecentInvoices] = useState<Invoice[]>([]);
   const [apiError, setApiError] = useState<string | null>(null);
 
+  const [shieldingTokenType, setShieldingTokenType] = useState(0); // 0 for Credits, 1 for USDCx
+  const [directTokenType, setDirectTokenType] = useState(0); // 0 for Credits, 1 for USDCx
+
+  const [lastSettledCount, setLastSettledCount] = useState<number | null>(null);
+  const [notification, setNotification] = useState<{ message: string; type: "success" | "info" } | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     async function fetchData() {
       try {
-        const [statsRes, recentRes] = await Promise.all([
-          api.getStats(),
-          api.getRecentInvoices(10),
-        ]);
+        let statsRes, invoicesRes: Invoice[];
+
+        if (address) {
+          const [stats, merchantInvoices, payerInvoices] = await Promise.all([
+            api.getStats(),
+            api.getInvoicesByMerchant(address),
+            api.getInvoicesByPayer(address),
+          ]);
+          statsRes = stats;
+
+          // Merge merchant + payer invoices, deduplicate, sort newest first
+          const seen = new Set<string>();
+          invoicesRes = [...merchantInvoices, ...payerInvoices]
+            .filter(inv => {
+              if (seen.has(inv.invoice_hash)) return false;
+              seen.add(inv.invoice_hash);
+              return true;
+            })
+            .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        } else {
+          const [stats, recent] = await Promise.all([
+            api.getStats(),
+            api.getRecentInvoices(10),
+          ]);
+          statsRes = stats;
+          invoicesRes = recent;
+        }
+
         if (!cancelled) {
+          // Check for new settlements
+          if (lastSettledCount !== null && statsRes.settled > lastSettledCount) {
+            setNotification({
+              message: `New Payment Received! (${statsRes.settled - lastSettledCount} new)`,
+              type: "success"
+            });
+            setTimeout(() => setNotification(null), 5000);
+          }
+
           setStats(statsRes);
-          setRecentInvoices(recentRes);
+          setRecentInvoices(invoicesRes);
+          setLastSettledCount(statsRes.settled);
           setApiError(null);
         }
       } catch (err) {
@@ -57,15 +100,21 @@ export default function Explorer() {
         }
       }
     }
+
     fetchData();
+    
+    // Set up polling interval for real-time updates
+    const pollInterval = setInterval(fetchData, 8000);
+
     if (address) {
-      refreshBalances().then(() => {
-        // Clear pending amount once a refresh confirms new data
-        setPendingShieldAmount(0);
-      });
+      refreshBalances();
     }
-    return () => { cancelled = true; };
-  }, [address, refreshBalances, setPendingShieldAmount]);
+
+    return () => { 
+      cancelled = true; 
+      clearInterval(pollInterval);
+    };
+  }, [address, refreshBalances, lastSettledCount]);
 
   // Poll for final tx hash for direct payments
   // Real Aleo tx IDs start with "at1". Leo wallet returns UUIDs (contain "-"),
@@ -79,9 +128,16 @@ export default function Explorer() {
     const poll = async () => {
       try {
         const res = await transactionStatus?.(directResult);
-        if (res && res.transactionId && res.transactionId.startsWith("at1")) {
+        if (res && res.transactionId && res.transactionId !== directResult && res.transactionId.startsWith("at1")) {
           if (cancelled) return;
           setDirectResult(res.transactionId);
+          return;
+        }
+
+        // Shield Wallet fallback: It returns status "Completed" but keeps the "shield_" ID
+        if (res?.status === "Completed" && res?.transactionId?.startsWith("shield_")) {
+          if (cancelled) return;
+          setDirectResult("Completed - Confirmed by Shield Wallet");
           return;
         }
       } catch {}
@@ -95,7 +151,7 @@ export default function Explorer() {
     };
   }, [directResult, address, transactionStatus]);
 
-  const handleDirectPay = async () => {
+  const handleDirectPay = async (tokenType = 0) => {
     const amountNum = parseFloat(directAmount);
     if (!directMerchant || !directAmount || isNaN(amountNum) || amountNum <= 0) {
       return;
@@ -104,17 +160,22 @@ export default function Explorer() {
     reset();
     setDirectResult(null);
 
-    const result = await makePayment(directMerchant.trim(), amountNum);
+    const result = await makePayment(directMerchant.trim(), amountNum, tokenType);
 
     if (result?.transactionId) {
       setDirectResult(result.transactionId);
       try {
-        const [statsRes, recentRes] = await Promise.all([
+        const [statsRes, merchantInvoices, payerInvoices] = await Promise.all([
           api.getStats(),
-          api.getRecentInvoices(10),
+          api.getInvoicesByMerchant(directMerchant.trim()),
+          api.getInvoicesByPayer(address!),
         ]);
+        const seen = new Set<string>();
+        const combined = [...merchantInvoices, ...payerInvoices]
+          .filter(inv => { if (seen.has(inv.invoice_hash)) return false; seen.add(inv.invoice_hash); return true; })
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
         setStats(statsRes);
-        setRecentInvoices(recentRes);
+        setRecentInvoices(combined);
       } catch {
         // ignore
       }
@@ -123,6 +184,20 @@ export default function Explorer() {
 
   return (
     <div className="relative max-w-5xl mx-auto py-12">
+      <AnimatePresence>
+        {notification && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, x: "-50%" }}
+            animate={{ opacity: 1, y: 0, x: "-50%" }}
+            exit={{ opacity: 0, y: -50, x: "-50%" }}
+            className="fixed top-8 left-1/2 z-[200] px-6 py-3 rounded-full bg-green-500/90 text-white font-bold text-sm shadow-[0_0_20px_rgba(34,197,94,0.3)] backdrop-blur-md flex items-center gap-3 border border-green-400/50"
+          >
+            <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            {notification.message}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="space-y-12">
         <header className="flex flex-col items-center text-center space-y-6">
           <motion.h1 
@@ -175,81 +250,139 @@ export default function Explorer() {
                 onClick={refreshBalances}
                 className="text-[10px] uppercase tracking-widest h-8 border border-white/5 bg-white/[0.02] hover:bg-white/10"
               >
-                Refresh Balances
+              Refresh Balances
               </Button>
             </div>
 
-            <div className="grid gap-8 md:grid-cols-2">
-            <GlassCard className="p-10 flex flex-col justify-between group overflow-hidden relative">
-              <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-                <svg className="w-24 h-24 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
-                </svg>
-              </div>
-              <div className="space-y-4 relative z-10">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                  <span className="text-[10px] uppercase tracking-[0.25em] font-bold text-slate-5">Shielded Balance</span>
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+              <GlassCard className="p-8 flex flex-col justify-between group overflow-hidden relative">
+                <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                  <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                  </svg>
                 </div>
-                <div className="text-5xl font-serif italic text-white flex items-baseline gap-2">
-                  {privateBalance !== null ? privateBalance.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
-                  <span className="text-lg font-sans not-italic text-slate-11 uppercase tracking-widest font-medium">Credits</span>
-                  {pendingShieldAmount > 0 && (
-                    <motion.div 
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      className="text-[10px] font-sans not-italic bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded-full"
-                    >
-                      +{pendingShieldAmount.toFixed(2)} Pending
-                    </motion.div>
+                <div className="space-y-4 relative z-10">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                    <span className="text-[10px] uppercase tracking-[0.25em] font-bold text-slate-5 text-nowrap">Shielded Credits</span>
+                  </div>
+                  <div className="text-4xl font-serif italic text-white flex items-baseline gap-2">
+                    {privateBalance !== null ? privateBalance.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
+                    <span className="text-sm font-sans not-italic text-slate-11 uppercase tracking-widest font-medium">Credits</span>
+                    {pendingShieldAmount > 0 && (
+                      <motion.div 
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="text-[9px] font-sans not-italic bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded-full"
+                      >
+                        +{pendingShieldAmount.toFixed(2)}
+                      </motion.div>
+                    )}
+                  </div>
+                  {recordError ? (
+                    <p className="text-[9px] text-amber-400/80 max-w-[220px] leading-tight mt-1">{recordError}</p>
+                  ) : (
+                    <p className="text-[10px] text-slate-11">Private spending records.</p>
                   )}
                 </div>
-                {recordError ? (
-                  <p className="text-[10px] text-amber-400/80 max-w-[220px] leading-tight mt-1">{recordError}</p>
-                ) : (
-                  <p className="text-xs text-slate-11 max-w-[200px]">Spendable immediately in private transactions.</p>
-                )}
-              </div>
-            </GlassCard>
+              </GlassCard>
 
-            <GlassCard className="p-10 flex flex-col justify-between group overflow-hidden relative border-white/5 bg-white/[0.01]">
-               <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-                <svg className="w-24 h-24 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
-                </svg>
-              </div>
-              <div className="space-y-4 relative z-10">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-slate-500" />
-                  <span className="text-[10px] uppercase tracking-[0.25em] font-bold text-slate-5">Public Balance</span>
+              <GlassCard className="p-8 flex flex-col justify-between group overflow-hidden relative">
+                <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                  <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
+                  </svg>
                 </div>
-                <div className="text-5xl font-serif italic text-white/60 flex items-baseline gap-2">
-                  {publicBalance !== null ? publicBalance.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
-                  <span className="text-lg font-sans not-italic text-slate-11 uppercase tracking-widest font-medium">Credits</span>
-                  {pendingShieldAmount > 0 && (
-                    <span className="text-[10px] font-sans not-italic text-slate-5 italic">
-                      ({pendingShieldAmount.toFixed(2)} shielding...)
-                    </span>
-                  )}
+                <div className="space-y-4 relative z-10">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-slate-500" />
+                    <span className="text-[10px] uppercase tracking-[0.25em] font-bold text-slate-5 text-nowrap">Public Balance</span>
+                  </div>
+                  <div className="text-4xl font-serif italic text-white/60 flex items-baseline gap-2">
+                    {publicBalance !== null ? publicBalance.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
+                    <span className="text-sm font-sans not-italic text-slate-11 uppercase tracking-widest font-medium">Credits</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] text-slate-11 whitespace-nowrap">Visible on ledger.</p>
+                    {(publicBalance || 0) > 0 && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => {
+                          setShieldingAmount(Math.min(30, publicBalance || 0).toString());
+                          setShieldingTokenType(0);
+                          setIsShieldModalOpen(true);
+                        }}
+                        className="text-[9px] uppercase tracking-widest h-6 border border-white/10 hover:bg-white/5 px-2"
+                      >
+                        Shield →
+                      </Button>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <p className="text-xs text-slate-11">Visible to the public ledger.</p>
-                  {(publicBalance || 0) > 0 && (
+              </GlassCard>
+
+              <GlassCard className="p-8 flex flex-col justify-between group overflow-hidden relative border-blue-500/5 bg-blue-500/[0.01]">
+                <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                  <svg className="w-16 h-16 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                </div>
+                <div className="space-y-4 relative z-10">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-blue-500" />
+                    <span className="text-[10px] uppercase tracking-[0.25em] font-bold text-slate-5 text-nowrap">USDCx Public</span>
+                  </div>
+                  <div className="text-4xl font-serif italic text-blue-400/80 flex items-baseline gap-2">
+                    {usdcxPublicBalance !== null ? usdcxPublicBalance.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
+                    <span className="text-sm font-sans not-italic text-slate-11 uppercase tracking-widest font-medium">USDCx</span>
+                  </div>
+                 <div className="flex items-center gap-4">
+                  {(usdcxPublicBalance || 0) > 0 && (
                     <Button 
                       variant="ghost" 
                       size="sm" 
                       onClick={() => {
-                        setShieldingAmount(Math.min(30, publicBalance || 0).toString());
+                        setShieldingAmount(Math.min(100, usdcxPublicBalance || 0).toString());
+                        setShieldingTokenType(1);
                         setIsShieldModalOpen(true);
                       }}
-                      className="text-[10px] uppercase tracking-widest h-7 border border-white/10 hover:bg-white/5"
+                      className="text-[9px] uppercase tracking-widest h-6 border border-blue-500/20 hover:bg-blue-500/5 text-blue-400 px-2"
                     >
-                      Shield Funds →
+                      Shield →
                     </Button>
                   )}
                 </div>
               </div>
             </GlassCard>
+
+            <GlassCard className="p-8 flex flex-col justify-between group overflow-hidden relative border-blue-500/10 bg-blue-500/[0.02]">
+                <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                  <svg className="w-16 h-16 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                  </svg>
+                </div>
+                <div className="space-y-4 relative z-10">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                    <span className="text-[10px] uppercase tracking-[0.25em] font-bold text-slate-5 text-nowrap">USDCx Private</span>
+                  </div>
+                  <div className="text-4xl font-serif italic text-blue-500 flex items-baseline gap-2">
+                    {usdcxPrivateBalance !== null ? usdcxPrivateBalance.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
+                    <span className="text-sm font-sans not-italic text-slate-11 uppercase tracking-widest font-medium">USDCx</span>
+                    {pendingUsdcxAmount > 0 && (
+                      <motion.div 
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="text-[9px] font-sans not-italic bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full"
+                      >
+                        +{pendingUsdcxAmount.toFixed(2)}
+                      </motion.div>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-11">Private stablecoin records.</p>
+                </div>
+              </GlassCard>
             </div>
           </motion.section>
         )}
@@ -273,15 +406,15 @@ export default function Explorer() {
               >
                 <GlassCard className="p-8 space-y-8 border-white/10 shadow-2xl">
                   <div className="space-y-2">
-                    <h2 className="text-2xl font-bold text-white tracking-tight">Shield Credits</h2>
-                    <p className="text-slate-11 text-sm">Convert public credits into private records for stealth spending.</p>
+                    <h2 className="text-2xl font-bold text-white tracking-tight">Shield {shieldingTokenType === 1 ? 'USDCx' : 'Credits'}</h2>
+                    <p className="text-slate-11 text-sm">Convert public {shieldingTokenType === 1 ? 'USDCx' : 'credits'} into private records for stealth spending.</p>
                   </div>
 
                   <div className="space-y-6">
                     <div className="space-y-4">
                       <div className="flex justify-between text-[10px] uppercase tracking-widest font-bold text-slate-5">
                         <span>Amount to Shield</span>
-                        <span>Available: {(publicBalance || 0).toFixed(4)}</span>
+                        <span>Available: {(shieldingTokenType === 1 ? usdcxPublicBalance || 0 : publicBalance || 0).toFixed(4)}</span>
                       </div>
                       <div className="relative">
                         <Input
@@ -292,7 +425,7 @@ export default function Explorer() {
                           className="pr-16"
                         />
                         <button 
-                          onClick={() => setShieldingAmount((publicBalance || 0).toString())}
+                          onClick={() => setShieldingAmount((shieldingTokenType === 1 ? usdcxPublicBalance || 0 : publicBalance || 0).toString())}
                           className="absolute right-4 top-[38px] text-[10px] uppercase tracking-widest font-bold text-white/40 hover:text-white transition-colors"
                         >
                           Max
@@ -306,24 +439,28 @@ export default function Explorer() {
                           const amt = parseFloat(shieldingAmount);
                           if (isNaN(amt) || amt <= 0) return;
                           setShieldingStatus("pending");
-                          const res = await convertPublicToPrivate(toMicrocredits(amt));
+                          const res = await convertPublicToPrivate(amt, shieldingTokenType);
                           if (res) {
                             setShieldingStatus("success");
-                            // Show pending amount in portfolio immediately
-                            setPendingShieldAmount(amt);
-                            setTimeout(() => {
+                            if (shieldingTokenType === 0) {
+                                setPendingShieldAmount(amt);
+                            }
+                            
+                            // Close modal and start polling for the new record
+                            setTimeout(async () => {
                               setIsShieldModalOpen(false);
                               setShieldingStatus("idle");
                               setShieldingAmount("");
-                              // Refresh now and again after chain confirms
-                              refreshBalances();
-                              setTimeout(() => refreshBalances(), 5000);
-                              setTimeout(() => refreshBalances(), 15000);
-                              setTimeout(() => {
-                                refreshBalances();
-                                setPendingShieldAmount(0);
-                              }, 30000);
-                            }, 2000);
+                              
+                              // Start aggressive polling for 2 minutes or until pending clears
+                              let polls = 0;
+                              const pollInterval = setInterval(async () => {
+                                polls++;
+                                await refreshBalances();
+                                // pendingShieldAmount is cleared inside useStealthPay when balance updates
+                                if (polls > 24) clearInterval(pollInterval); // Stop after 2 mins approx
+                              }, 5000);
+                            }, 1500);
                           } else {
                             setShieldingStatus("error");
                           }
@@ -389,7 +526,7 @@ export default function Explorer() {
             <GlassCard className="h-full p-10 flex flex-col gap-8">
               <div className="space-y-2">
                 <h2 className="text-2xl font-bold text-white tracking-tight">Direct Payment</h2>
-                <p className="text-slate-11 text-sm">Send credits directly to a merchant address without an invoice.</p>
+                <p className="text-slate-11 text-sm">Send private funds directly to a merchant address.</p>
               </div>
 
               {!address ? (
@@ -398,6 +535,22 @@ export default function Explorer() {
                  </div>
               ) : (
                 <div className="space-y-6">
+                  {/* Token Selector */}
+                  <div className="flex gap-2 p-1 bg-white/5 rounded-lg w-full">
+                    <button 
+                      onClick={() => setDirectTokenType(0)}
+                      className={`flex-1 py-2 text-[10px] uppercase tracking-widest font-bold rounded-md transition-all ${directTokenType === 0 ? 'bg-white text-black shadow-lg' : 'text-slate-11 hover:text-white'}`}
+                    >
+                      Aleo Credits
+                    </button>
+                    <button 
+                      onClick={() => setDirectTokenType(1)}
+                      className={`flex-1 py-2 text-[10px] uppercase tracking-widest font-bold rounded-md transition-all ${directTokenType === 1 ? 'bg-blue-500 text-white shadow-lg' : 'text-slate-11 hover:text-white'}`}
+                    >
+                      USDCx
+                    </button>
+                  </div>
+
                   <Input
                     label="Merchant address"
                     value={directMerchant}
@@ -408,7 +561,7 @@ export default function Explorer() {
                     placeholder="aleo1..."
                   />
                   <Input
-                    label="Amount (credits)"
+                    label={`Amount (${directTokenType === 1 ? 'USDCx' : 'credits'})`}
                     type="number"
                     placeholder="0.00"
                     value={directAmount}
@@ -422,7 +575,7 @@ export default function Explorer() {
                   
                   <div className="pt-2">
                     <Button
-                      onClick={handleDirectPay}
+                      onClick={() => handleDirectPay(directTokenType)}
                       disabled={status === "pending" || !directMerchant || !directAmount}
                       className="w-full"
                     >
@@ -430,14 +583,44 @@ export default function Explorer() {
                     </Button>
                   </div>
 
-                  {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
+                  {error === "wallet_syncing" ? (
+                    <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 mt-4 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full border-2 border-amber-500/40 border-t-amber-500 animate-spin shrink-0" />
+                        <p className="text-xs text-amber-400 font-bold">Shielded Balance Syncing</p>
+                      </div>
+                      <p className="text-[10px] text-slate-11 leading-relaxed">
+                        Open Leo Wallet to speed up sync, then retry.
+                      </p>
+                    </div>
+                  ) : error ? (
+                    <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 mt-4">
+                      <p className="text-xs text-red-400">{error}</p>
+                      {error.includes("shield credits first") && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setShieldingAmount(directAmount);
+                            setShieldingTokenType(directTokenType);
+                            setIsShieldModalOpen(true);
+                          }}
+                          className="mt-2 text-[10px] uppercase tracking-widest text-white border border-white/20 hover:bg-white/10"
+                        >
+                          Shield {directTokenType === 1 ? 'USDCx' : 'Credits'} Now →
+                        </Button>
+                      )}
+                    </div>
+                  ) : null}
                   {directResult && (
                     <div className="p-4 rounded-xl bg-white/5 border border-white/10 mt-4 overflow-hidden">
-                      <p className="text-xs text-slate-11 mb-1">Success. Transaction ID:</p>
-                      {!directResult.startsWith("at1") ? (
+                      <p className="text-xs text-slate-11 mb-1">Success. Transaction Status:</p>
+                      {!directResult.startsWith("at1") && !directResult.includes("Completed") ? (
                         <p className="text-[10px] text-amber-500 font-bold uppercase tracking-widest animate-pulse">Finalizing on Aleo Ledger...</p>
                       ) : (
-                        <p className="text-[10px] font-mono text-white break-all">{directResult}</p>
+                        <p className={`text-[10px] font-mono break-all ${directResult.includes("Completed") ? "text-green-400" : "text-white"}`}>
+                          {directResult}
+                        </p>
                       )}
                     </div>
                   )}
@@ -455,39 +638,66 @@ export default function Explorer() {
             <GlassCard className="h-full p-10 flex flex-col gap-8">
               <div className="flex justify-between items-end">
                 <div className="space-y-2">
-                  <h2 className="text-2xl font-bold text-white tracking-tight">Recent Activity</h2>
-                  <p className="text-slate-11 text-sm">Latest transactions across the network.</p>
+                  <h2 className="text-2xl font-bold text-white tracking-tight">
+                    {address ? "My Transactions" : "Recent Activity"}
+                  </h2>
+                  <p className="text-slate-11 text-sm">
+                    {address ? "Your invoices and payments on the network." : "Latest transactions across the network."}
+                  </p>
                 </div>
               </div>
 
-              <div className="flex-1 space-y-4">
+              <div className="flex-1 space-y-3">
                 {recentInvoices.length > 0 ? (
-                  recentInvoices.slice(0, 6).map((inv, i) => (
-                    <motion.div 
-                      key={inv.invoice_hash}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: 0.8 + i * 0.05 }}
-                      className="flex justify-between items-center p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-colors"
-                    >
-                      <div className="space-y-1">
-                        <div className="text-xs font-mono text-slate-11">
-                          INV-{inv.invoice_hash.slice(0, 8).toUpperCase()}
+                  recentInvoices.slice(0, 6).map((inv, i) => {
+                    const isMerchant = address && inv.merchant_address === address;
+                    const tokenLabel = inv.invoice_type === 1 ? "USDCx" : "Credits";
+                    const isSettled = inv.status === "SETTLED";
+                    return (
+                      <motion.div
+                        key={inv.invoice_hash}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.8 + i * 0.05 }}
+                        className="flex justify-between items-center p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          {address && (
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${isMerchant ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"}`}>
+                              {isMerchant ? "↓" : "↑"}
+                            </div>
+                          )}
+                          <div className="space-y-0.5">
+                            <div className="text-xs font-mono text-slate-11">
+                              INV-{inv.invoice_hash.slice(0, 8).toUpperCase()}
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              {address && (
+                                <span className={`text-[9px] font-bold uppercase tracking-widest ${isMerchant ? "text-green-500" : "text-red-400"}`}>
+                                  {isMerchant ? "Incoming" : "Outgoing"}
+                                </span>
+                              )}
+                              <span className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${isSettled ? "bg-green-500/10 text-green-400" : "bg-amber-500/10 text-amber-400"}`}>
+                                {inv.status}
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-[10px] text-slate-5 font-bold uppercase tracking-widest">
-                          {inv.status}
+                        <div className="text-right space-y-0.5">
+                          <div className={`text-sm font-bold ${isMerchant ? "text-green-400" : "text-white"}`}>
+                            {isMerchant ? "+" : address ? "−" : ""}{inv.amount} {tokenLabel}
+                          </div>
+                          {inv.memo && (
+                            <div className="text-[10px] text-slate-5 truncate max-w-[120px]">{inv.memo}</div>
+                          )}
                         </div>
-                      </div>
-                      <div className="text-right space-y-1">
-                        <div className="text-sm font-bold text-white">{inv.amount} CREDITS</div>
-                        <div className="text-[10px] text-slate-5 font-medium">Standard Payment</div>
-                      </div>
-                    </motion.div>
-                  ))
+                      </motion.div>
+                    );
+                  })
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center p-8 border border-dashed border-white/10 rounded-2xl">
                     <p className="text-slate-11 text-sm italic">
-                      {apiError ? "Activity unavailable" : "No recent activity"}
+                      {apiError ? "Activity unavailable" : address ? "No transactions yet" : "No recent activity"}
                     </p>
                   </div>
                 )}

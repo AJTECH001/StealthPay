@@ -69,6 +69,12 @@ export const api = {
     return res.json();
   },
 
+  async getInvoicesByPayer(address: string): Promise<Invoice[]> {
+    const res = await fetchApi(`/api/invoices/payer/${encodeURIComponent(address)}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
   async getInvoiceByHash(hash: string): Promise<Invoice> {
     const res = await fetchApi(`/api/invoice/${encodeURIComponent(hash)}`);
     if (!res.ok) throw new Error(await res.text());
