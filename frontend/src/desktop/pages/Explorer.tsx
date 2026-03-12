@@ -7,6 +7,8 @@ import { useWallet } from "@provablehq/aleo-wallet-adaptor-react";
 import { useStealthPay } from "../../hooks/useStealthPay";
 import { api, type InvoiceStats, type Invoice } from "../../services/api";
 import { motion, AnimatePresence } from "framer-motion";
+import { QRCodeSVG } from "qrcode.react";
+import { buildPaymentUrl } from "../../services/stealthpay";
 
 export default function Explorer() {
   const { address } = useWallet();
@@ -45,6 +47,8 @@ export default function Explorer() {
 
   const lastSettledCountRef = useRef<number | null>(null);
   const [notification, setNotification] = useState<{ message: string; type: "success" | "info" } | null>(null);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [qrInvoice, setQrInvoice] = useState<Invoice | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -261,9 +265,9 @@ export default function Explorer() {
               </Button>
             </div>
 
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
               {/* Shielded Credits */}
-              <GlassCard className="p-8 flex flex-col justify-between group overflow-hidden relative">
+              <GlassCard className="p-6 md:p-8 flex flex-col justify-between group overflow-hidden relative">
                 <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
                   <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
@@ -310,7 +314,7 @@ export default function Explorer() {
               </GlassCard>
 
               {/* Public Credits */}
-              <GlassCard className="p-8 flex flex-col justify-between group overflow-hidden relative">
+              <GlassCard className="p-6 md:p-8 flex flex-col justify-between group overflow-hidden relative">
                 <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
                   <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
@@ -347,7 +351,7 @@ export default function Explorer() {
                 </div>
               </GlassCard>
 
-              <GlassCard className="p-8 flex flex-col justify-between group overflow-hidden relative border-blue-500/5 bg-blue-500/[0.01]">
+              <GlassCard className="p-6 md:p-8 flex flex-col justify-between group overflow-hidden relative border-blue-500/5 bg-blue-500/[0.01]">
                 <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
                   <svg className="w-16 h-16 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -381,7 +385,7 @@ export default function Explorer() {
               </div>
             </GlassCard>
 
-            <GlassCard className="p-8 flex flex-col justify-between group overflow-hidden relative border-blue-500/10 bg-blue-500/[0.02]">
+            <GlassCard className="p-6 md:p-8 flex flex-col justify-between group overflow-hidden relative border-blue-500/10 bg-blue-500/[0.02]">
                 <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
                   <svg className="w-16 h-16 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
@@ -512,7 +516,95 @@ export default function Explorer() {
           )}
         </AnimatePresence>
 
-        <section className="grid gap-8 md:grid-cols-3">
+        {/* QR Code Modal */}
+        <AnimatePresence>
+          {isQrModalOpen && qrInvoice && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsQrModalOpen(false)}
+                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                className="relative w-full max-w-md overflow-hidden"
+              >
+                <GlassCard className="p-8 space-y-8 border-white/10 shadow-2xl text-center">
+                  <div className="space-y-2">
+                    <h2 className="text-2xl font-bold text-white tracking-tight italic font-serif">Invoice QR Code</h2>
+                    <p className="text-slate-11 text-xs">Share this code with the payer to receive private funds.</p>
+                  </div>
+
+                  <div className="flex justify-center">
+                    <div className="p-4 bg-white rounded-2xl shadow-[0_0_50px_rgba(255,255,255,0.1)]">
+                      <QRCodeSVG
+                        value={buildPaymentUrl(
+                          window.location.origin,
+                          qrInvoice.merchant_address,
+                          String(qrInvoice.amount),
+                          qrInvoice.salt || qrInvoice.invoice_hash,
+                          qrInvoice.token_type
+                        )}
+                        size={200}
+                        level="H"
+                        includeMargin={false}
+                        imageSettings={{
+                          src: "/aleo.svg",
+                          x: undefined,
+                          y: undefined,
+                          height: 28,
+                          width: 28,
+                          excavate: true,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-xl bg-white/[0.03] border border-white/5 space-y-2">
+                       <span className="text-[10px] text-slate-5 font-bold uppercase tracking-[0.2em] block">Order Detail</span>
+                       <div className="text-lg font-serif italic text-white">
+                         {qrInvoice.amount} {qrInvoice.token_type === 1 ? 'USDCx' : 'Credits'}
+                       </div>
+                    </div>
+                    
+                    <Button 
+                      variant="secondary" 
+                      onClick={() => {
+                        const url = buildPaymentUrl(
+                          window.location.origin,
+                          qrInvoice.merchant_address,
+                          String(qrInvoice.amount),
+                          qrInvoice.salt || qrInvoice.invoice_hash,
+                          qrInvoice.token_type
+                        );
+                        navigator.clipboard.writeText(url);
+                        setNotification({ message: "Link copied to clipboard", type: "info" });
+                        setTimeout(() => setNotification(null), 3000);
+                      }}
+                      className="w-full text-xs uppercase tracking-widest"
+                    >
+                      Copy Payment Link
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      onClick={() => setIsQrModalOpen(false)}
+                      className="w-full text-xs uppercase tracking-widest text-slate-11"
+                    >
+                      Close
+                    </Button>
+                  </div>
+                </GlassCard>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        <section className="grid gap-8 grid-cols-1 md:grid-cols-3">
           <AnimatePresence>
             {stats && (
               <>
@@ -526,7 +618,7 @@ export default function Explorer() {
                     initial={{ scale: 0.95, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     transition={{ delay: 0.3 + i * 0.1 }}
-                    className="p-8 rounded-3xl bg-[#0a0a0a] border border-white/5 flex flex-col items-center text-center"
+                    className="p-6 md:p-8 rounded-3xl bg-[#0a0a0a] border border-white/5 flex flex-col items-center text-center"
                   >
                     <span className="text-xs uppercase tracking-[0.2em] text-slate-5 font-bold mb-2">
                       {stat.label}
@@ -548,7 +640,7 @@ export default function Explorer() {
             animate={{ x: 0, opacity: 1 }}
             transition={{ delay: 0.6 }}
           >
-            <GlassCard className="h-full p-10 flex flex-col gap-8">
+            <GlassCard className="h-full p-6 md:p-10 flex flex-col gap-8">
               <div className="space-y-2">
                 <h2 className="text-2xl font-bold text-white tracking-tight">Direct Payment</h2>
                 <p className="text-slate-11 text-sm">Send private funds directly to a merchant address.</p>
@@ -660,7 +752,7 @@ export default function Explorer() {
             animate={{ x: 0, opacity: 1 }}
             transition={{ delay: 0.6 }}
           >
-            <GlassCard className="h-full p-10 flex flex-col gap-8">
+            <GlassCard className="h-full p-6 md:p-10 flex flex-col gap-8">
               <div className="flex justify-between items-end">
                 <div className="space-y-2">
                   <h2 className="text-2xl font-bold text-white tracking-tight">
@@ -705,6 +797,19 @@ export default function Explorer() {
                               <span className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${isSettled ? "bg-green-500/10 text-green-400" : "bg-amber-500/10 text-amber-400"}`}>
                                 {inv.status}
                               </span>
+                              {isMerchant && !isSettled && (
+                                <button
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    setQrInvoice(inv);
+                                    setIsQrModalOpen(true);
+                                  }}
+                                  className="p-1 px-1.5 rounded bg-white/5 border border-white/10 hover:bg-white/10 transition-colors text-[9px] font-bold text-white uppercase tracking-tighter"
+                                  title="Show Payment QR"
+                                >
+                                  QR
+                                </button>
+                              )}
                             </div>
                           </div>
                         </div>

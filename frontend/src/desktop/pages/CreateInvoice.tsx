@@ -297,7 +297,7 @@ export default function CreateInvoice() {
         )}
 
         <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }}>
-          <GlassCard className="p-10">
+          <GlassCard className="p-6 md:p-10">
             <AnimatePresence mode="wait">
 
               {/* No wallet */}

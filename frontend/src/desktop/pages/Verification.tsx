@@ -74,7 +74,7 @@ export default function Verification() {
           <motion.h1 
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            className="text-5xl md:text-7xl font-serif italic text-white tracking-tighter"
+            className="text-4xl md:text-7xl font-serif italic text-white tracking-tighter"
           >
             Verification
           </motion.h1>
@@ -95,7 +95,7 @@ export default function Verification() {
             animate={{ x: 0, opacity: 1 }}
             transition={{ delay: 0.2 }}
           >
-            <GlassCard className="h-full p-10 flex flex-col gap-8">
+            <GlassCard className="h-full p-6 md:p-10 flex flex-col gap-8">
               <div className="space-y-2">
                 <h2 className="text-2xl font-bold text-white tracking-tight">On-Chain Lookup</h2>
                 <p className="text-slate-11 text-sm">Paste a Transaction ID to view the immutable ledger entry.</p>
@@ -125,7 +125,7 @@ export default function Verification() {
             animate={{ x: 0, opacity: 1 }}
             transition={{ delay: 0.3 }}
           >
-            <GlassCard className="h-full p-10 flex flex-col gap-8">
+            <GlassCard className="h-full p-6 md:p-10 flex flex-col gap-8">
               <div className="space-y-2">
                 <h2 className="text-2xl font-bold text-white tracking-tight">Proof Validation</h2>
                 <p className="text-slate-11 text-sm">Verify shielded payments by matching the transaction payload with the invoice salt.</p>

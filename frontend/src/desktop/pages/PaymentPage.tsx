@@ -402,7 +402,7 @@ export default function PaymentPage() {
           <motion.h1 
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            className="text-5xl md:text-7xl font-serif italic text-white tracking-tighter"
+            className="text-4xl md:text-7xl font-serif italic text-white tracking-tighter"
           >
             Checkout
           </motion.h1>
@@ -423,7 +423,7 @@ export default function PaymentPage() {
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.2 }}
         >
-          <GlassCard className="p-10">
+          <GlassCard className="p-6 md:p-10">
             <AnimatePresence mode="wait">
               {loadingInvoice ? (
                 <motion.div 
@@ -531,16 +531,16 @@ export default function PaymentPage() {
                   className="space-y-10"
                 >
                   <div className="grid gap-6">
-                    <div className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 flex justify-between items-center">
+                    <div className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                       <div className="space-y-1">
                         <span className="text-[10px] text-slate-5 font-bold uppercase tracking-widest">Order Total</span>
-                        <div className={`text-3xl font-serif italic ${tokenType === 1 ? 'text-blue-400' : 'text-white'}`}>
+                        <div className={`text-2xl md:text-3xl font-serif italic ${tokenType === 1 ? 'text-blue-400' : 'text-white'}`}>
                           {amountCredits} {tokenType === 1 ? 'USDCx' : 'Credits'}
                         </div>
                       </div>
-                      <div className="text-right space-y-1">
+                      <div className="text-left sm:text-right space-y-1">
                          <span className="text-[10px] text-slate-5 font-bold uppercase tracking-widest">Recipient</span>
-                         <div className="text-[10px] font-mono text-slate-11">{merchant.slice(0, 8)}...{merchant.slice(-8)}</div>
+                         <div className="text-[10px] font-mono text-slate-11 break-all">{merchant.slice(0, 12)}...{merchant.slice(-12)}</div>
                       </div>
                     </div>
 

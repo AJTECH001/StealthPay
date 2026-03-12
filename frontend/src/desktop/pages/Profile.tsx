@@ -96,7 +96,7 @@ export default function Profile() {
           <motion.h1
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            className="text-5xl md:text-7xl font-serif italic text-white tracking-tighter"
+            className="text-4xl md:text-7xl font-serif italic text-white tracking-tighter"
           >
             Merchant Profile
           </motion.h1>
@@ -116,7 +116,7 @@ export default function Profile() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
           >
-            <GlassCard className="p-16 flex flex-col items-center justify-center text-center space-y-4">
+            <GlassCard className="p-8 md:p-16 flex flex-col items-center justify-center text-center space-y-4">
               <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center border border-white/10 mb-2">
                 <svg className="w-8 h-8 text-slate-11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
               </div>
@@ -204,7 +204,7 @@ export default function Profile() {
               transition={{ delay: 0.3 }}
               className="lg:col-span-2"
             >
-              <GlassCard className="h-full p-10 flex flex-col gap-8">
+              <GlassCard className="h-full p-6 md:p-10 flex flex-col gap-8">
                 <div className="flex justify-between items-center">
                   <div className="space-y-1">
                     <h2 className="text-2xl font-bold text-white tracking-tight">Your Invoices</h2>
