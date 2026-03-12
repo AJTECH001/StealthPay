@@ -68,13 +68,13 @@ export default function Landing() {
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.8, delay: 0.2 }}
-          className="flex flex-wrap gap-4"
+          className="flex flex-col md:flex-row flex-wrap gap-4 w-full md:w-auto"
         >
-          <Link to="/explorer">
-            <Button size="lg" className="uppercase tracking-widest text-xs">Launch App</Button>
+          <Link to="/explorer" className="w-full md:w-auto">
+            <Button size="lg" className="w-full md:w-auto uppercase tracking-widest text-xs">Launch App</Button>
           </Link>
-          <Link to="/docs">
-            <Button variant="secondary" size="lg" className="uppercase tracking-widest text-xs">
+          <Link to="/docs" className="w-full md:w-auto">
+            <Button variant="secondary" size="lg" className="w-full md:w-auto uppercase tracking-widest text-xs">
               Read documentation
             </Button>
           </Link>
@@ -125,12 +125,12 @@ export default function Landing() {
         <h2 className="text-5xl md:text-7xl font-serif text-white mb-12 tracking-tighter">
           Ready to build <br /> with privacy?
         </h2>
-        <div className="flex flex-wrap gap-4 justify-center">
-          <Link to="/explorer">
-            <Button size="lg" className="px-12 uppercase tracking-widest text-xs">Get Started</Button>
+        <div className="flex flex-col md:flex-row flex-wrap gap-4 justify-center">
+          <Link to="/explorer" className="w-full md:w-auto">
+            <Button size="lg" className="w-full md:w-auto px-12 uppercase tracking-widest text-xs">Get Started</Button>
           </Link>
-          <Link to="/verify">
-            <Button variant="outline" size="lg" className="px-12 uppercase tracking-widest text-xs">
+          <Link to="/verify" className="w-full md:w-auto">
+            <Button variant="outline" size="lg" className="w-full md:w-auto px-12 uppercase tracking-widest text-xs">
               Verify Transaction
             </Button>
           </Link>

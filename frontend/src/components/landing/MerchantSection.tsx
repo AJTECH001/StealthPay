@@ -30,7 +30,7 @@ export function MerchantSection() {
           </div>
           <div className="landing-merchant-visual">
             <div className="landing-merchant-visual-placeholder">
-              <span>stealthpay_usdcx_v2.aleo</span>
+              <span>stealthpay_usdcx_v3.aleo</span>
               <span>Aleo Testnet</span>
             </div>
           </div>

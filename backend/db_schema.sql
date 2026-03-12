@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS invoices (
     invoice_transaction_id TEXT,
     payment_tx_ids TEXT,
     salt TEXT,
-    invoice_type INTEGER DEFAULT 0
+    invoice_type INTEGER DEFAULT 0,
+    token_type INTEGER DEFAULT 0
 );
 
 -- Ensure all columns exist if table was created with an older schema
@@ -25,6 +26,7 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS memo TEXT;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_transaction_id TEXT;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS block_height INTEGER;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS block_settled INTEGER;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS token_type INTEGER DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
 CREATE INDEX IF NOT EXISTS idx_invoices_merchant ON invoices(merchant_address);

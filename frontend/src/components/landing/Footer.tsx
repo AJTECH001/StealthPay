@@ -43,7 +43,7 @@ export function Footer() {
             <div className="landing-footer-col">
               <h4>Support</h4>
               <a href="#docs">Docs</a>
-              <a href="mailto:support@stealthpay_usdcx_v2.aleo">Contact</a>
+              <a href="mailto:support@stealthpay_usdcx_v3.aleo">Contact</a>
               <a href="#status">Status</a>
             </div>
           </div>

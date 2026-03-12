@@ -34,6 +34,9 @@ export type Invoice = {
   payment_tx_ids?: string | string[];
   salt?: string;
   invoice_type: number;
+  token_type: number;      // 0 = Credits, 1 = USDCx
+  block_height?: number;
+  block_settled?: number;
   created_at: string;
   updated_at: string;
 };
@@ -104,6 +107,7 @@ export const api = {
     invoice_transaction_id?: string;
     salt?: string;
     invoice_type?: number;
+    token_type?: number;
   }): Promise<Invoice> {
     const res = await fetchApi("/api/invoices", {
       method: "POST",

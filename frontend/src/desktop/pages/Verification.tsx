@@ -33,7 +33,7 @@ export default function Verification() {
       
       if (data.execution && data.execution.transitions) {
         for (const transition of data.execution.transitions) {
-          const isStealthPay = transition.program === "stealthpay_usdcx_v2.aleo";
+          const isStealthPay = transition.program === "stealthpay_usdcx_v3.aleo";
           if (isStealthPay && transition.function === "finalize_pay_invoice") {
             // New signature: [salt, amount, merchant, token_type] (indices 0, 1, 2, 3)
             // Old signature (if applicable): maybe salt was at index 1? 

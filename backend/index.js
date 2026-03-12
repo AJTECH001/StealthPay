@@ -26,6 +26,63 @@ if (!databaseUrl) {
 
 const pool = new Pool({ connectionString: databaseUrl });
 
+// ─── Auto-migrate on startup ────────────────────────────────────────────────
+// Adds any missing columns to the invoices table. Safe to run on every restart.
+async function runMigrations() {
+    // Ensure base table exists first
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS invoices (
+            invoice_hash TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            block_height INTEGER,
+            block_settled INTEGER,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            merchant_address TEXT,
+            payer_address TEXT,
+            amount NUMERIC,
+            memo TEXT,
+            invoice_transaction_id TEXT,
+            payment_tx_ids TEXT,
+            salt TEXT,
+            invoice_type INTEGER DEFAULT 0,
+            token_type INTEGER DEFAULT 0
+        )
+    `);
+
+    const columnMigrations = [
+        `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payer_address TEXT`,
+        `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS salt TEXT`,
+        `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_type INTEGER DEFAULT 0`,
+        `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_tx_ids TEXT`,
+        `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS memo TEXT`,
+        `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_transaction_id TEXT`,
+        `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS block_height INTEGER`,
+        `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS block_settled INTEGER`,
+        `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS token_type INTEGER DEFAULT 0`,
+        `CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status)`,
+        `CREATE INDEX IF NOT EXISTS idx_invoices_merchant ON invoices(merchant_address)`,
+        `CREATE INDEX IF NOT EXISTS idx_invoices_created_at ON invoices(created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_invoices_invoice_tx ON invoices(invoice_transaction_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_invoices_salt ON invoices(salt)`,
+        `CREATE INDEX IF NOT EXISTS idx_invoices_salt_amount ON invoices(salt, amount)`,
+    ];
+
+    for (const sql of columnMigrations) {
+        try {
+            await pool.query(sql);
+        } catch (err) {
+            // Non-fatal — log and continue
+            console.warn(`Migration warning: ${err.message}`);
+        }
+    }
+    console.log('✅ Database migrations applied.');
+}
+
+runMigrations().catch(err => {
+    console.error('❌ Migration failed (server will still start):', err.message);
+});
+
 app.get('/', (req, res) => {
     res.send('StealthPay Backend is running');
 });
@@ -49,11 +106,10 @@ app.get('/api/invoices', async (req, res) => {
         }
         const rows = result.rows;
 
-        const decryptedData = (rows || []).map(inv => ({
-            ...inv,
-            merchant_address: decrypt(inv.merchant_address),
-            payer_address: decrypt(inv.payer_address),
-        }));
+        const decryptedData = (rows || []).map(inv => {
+            const { payer_address, ...rest } = inv; // omit payer_address for privacy
+            return { ...rest, merchant_address: decrypt(inv.merchant_address) };
+        });
 
         let finalData = decryptedData;
         if (merchant) {
@@ -77,11 +133,10 @@ app.get('/api/invoices/merchant/:address', async (req, res) => {
         const rows = result.rows;
 
         const merchantInvoices = (rows || [])
-            .map(inv => ({
-                ...inv,
-                merchant_address: decrypt(inv.merchant_address),
-                payer_address: decrypt(inv.payer_address),
-            }))
+            .map(inv => {
+                const { payer_address, ...rest } = inv;
+                return { ...rest, merchant_address: decrypt(inv.merchant_address) };
+            })
             .filter(inv => inv.merchant_address === address);
 
         res.json(merchantInvoices);
@@ -100,13 +155,15 @@ app.get('/api/invoices/payer/:address', async (req, res) => {
         );
         const rows = result.rows;
 
+        // For payer lookup we need to decrypt and compare payer_address, but don't return it
         const payerInvoices = (rows || [])
-            .map(inv => ({
-                ...inv,
-                merchant_address: decrypt(inv.merchant_address),
-                payer_address: decrypt(inv.payer_address),
-            }))
-            .filter(inv => inv.payer_address === address);
+            .filter(inv => {
+                try { return decrypt(inv.payer_address) === address; } catch { return false; }
+            })
+            .map(inv => {
+                const { payer_address, ...rest } = inv;
+                return { ...rest, merchant_address: decrypt(inv.merchant_address) };
+            });
 
         res.json(payerInvoices);
     } catch (error) {
@@ -126,11 +183,10 @@ app.get('/api/invoices/recent', async (req, res) => {
         );
         const rows = result.rows;
 
-        const decryptedData = (rows || []).map(inv => ({
-            ...inv,
-            merchant_address: decrypt(inv.merchant_address),
-            payer_address: decrypt(inv.payer_address),
-        }));
+        const decryptedData = (rows || []).map(inv => {
+            const { payer_address, ...rest } = inv;
+            return { ...rest, merchant_address: decrypt(inv.merchant_address) };
+        });
 
         res.json(decryptedData);
     } catch (error) {
@@ -158,9 +214,8 @@ app.get('/api/invoices/by-salt', async (req, res) => {
             return res.status(404).json({ error: 'Invoice not found' });
         }
 
-        const data = rows[0];
-        data.merchant_address = decrypt(data.merchant_address);
-        data.payer_address = decrypt(data.payer_address);
+        const { payer_address, ...rest } = rows[0];
+        const data = { ...rest, merchant_address: decrypt(rest.merchant_address) };
 
         res.json(data);
     } catch (error) {
@@ -213,9 +268,8 @@ app.get('/api/invoice/:hash', async (req, res) => {
             return res.status(404).json({ error: 'Invoice not found' });
         }
 
-        const data = rows[0];
-        data.merchant_address = decrypt(data.merchant_address);
-        data.payer_address = decrypt(data.payer_address);
+        const { payer_address, ...rest } = rows[0];
+        const data = { ...rest, merchant_address: decrypt(rest.merchant_address) };
 
         res.json(data);
     } catch (error) {
@@ -225,23 +279,27 @@ app.get('/api/invoice/:hash', async (req, res) => {
 });
 
 app.post('/api/invoices', async (req, res) => {
-    const { invoice_hash, merchant_address, amount, memo, status, invoice_transaction_id, salt, invoice_type } = req.body;
+    const { invoice_hash, merchant_address, amount, memo, status, invoice_transaction_id, salt, invoice_type, token_type } = req.body;
 
-    if (!invoice_hash || !merchant_address || !amount) {
-        return res.status(400).json({ error: 'Missing required fields' });
+    // Donation invoices have amount 0; amount can be omitted for those
+    if (!invoice_hash || !merchant_address) {
+        return res.status(400).json({ error: 'Missing required fields: invoice_hash, merchant_address' });
     }
 
     try {
         const encryptedMerchant = encrypt(merchant_address);
         const statusVal = status || 'PENDING';
         const invoiceTypeVal = invoice_type !== undefined ? invoice_type : 0;
+        const tokenTypeVal = token_type !== undefined ? token_type : 0;
+        // For donations (invoice_type=2), amount is 0 which is valid
+        const amountVal = amount !== undefined ? amount : 0;
 
         await pool.query(
             `INSERT INTO invoices (
                 invoice_hash, merchant_address, amount, memo, status,
-                invoice_transaction_id, salt, invoice_type
+                invoice_transaction_id, salt, invoice_type, token_type
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (invoice_hash) DO UPDATE SET
                 merchant_address = EXCLUDED.merchant_address,
                 amount = EXCLUDED.amount,
@@ -250,16 +308,18 @@ app.post('/api/invoices', async (req, res) => {
                 invoice_transaction_id = EXCLUDED.invoice_transaction_id,
                 salt = EXCLUDED.salt,
                 invoice_type = EXCLUDED.invoice_type,
+                token_type = EXCLUDED.token_type,
                 updated_at = NOW()`,
             [
                 invoice_hash,
                 encryptedMerchant,
-                amount,
+                amountVal,
                 memo || null,
                 statusVal,
                 invoice_transaction_id || null,
                 salt || null,
                 invoiceTypeVal,
+                tokenTypeVal,
             ]
         );
 
@@ -270,7 +330,11 @@ app.post('/api/invoices', async (req, res) => {
         const rows = selectResult.rows;
 
         const data = rows[0];
-        if (data) data.merchant_address = merchant_address;
+        // Return decrypted merchant address; omit payer_address for privacy
+        if (data) {
+            data.merchant_address = merchant_address;
+            delete data.payer_address;
+        }
 
         res.json(data);
     } catch (err) {
@@ -335,11 +399,11 @@ app.patch('/api/invoices/:hash', async (req, res) => {
         );
         const rows = selectResult.rows;
 
-        const data = rows[0];
-        if (data) {
-            data.merchant_address = decrypt(data.merchant_address);
-            data.payer_address = decrypt(data.payer_address);
+        if (!rows || rows.length === 0) {
+            return res.status(404).json({ error: 'Invoice not found after update' });
         }
+        const { payer_address: _pa, ...rest } = rows[0];
+        const data = { ...rest, merchant_address: decrypt(rest.merchant_address) };
 
         res.json(data);
     } catch (err) {

@@ -82,7 +82,7 @@ async function makeStealthPayment({ apiUrl, payerPrivateKey, merchantAddress, am
   const inputs = [`${amountMicrocredits}u64`, merchantAddress];
 
   return await programManager.execute({
-    programName: "stealthpay_usdcx_v2.aleo",
+    programName: "stealthpay_usdcx_v3.aleo",
     functionName: "make_payment",
     priorityFee,
     privateFee,

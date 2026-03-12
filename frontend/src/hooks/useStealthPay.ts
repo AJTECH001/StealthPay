@@ -1,26 +1,43 @@
+/**
+ * useStealthPay — core hook for all StealthPay on-chain interactions.
+ *
+ * Every executeTransaction call matches the exact Leo contract signature:
+ *
+ *   create_invoice(merchant, amount:u64, salt, memo, expiry_hours:u32, invoice_type:u8)
+ *   create_invoice_usdcx(merchant, amount:u128, salt, memo, expiry_hours:u32, invoice_type:u8)
+ *   pay_invoice(record, merchant, amount:u64, salt, payment_secret, message)
+ *   pay_invoice_usdcx(record, merchant, amount:u128, salt, payment_secret, message, [proof,proof])
+ *   pay_donation(record, merchant, amount:u64, salt, payment_secret, message)
+ *   pay_donation_usdcx(record, merchant, amount:u128, salt, payment_secret, message, [proof,proof])
+ *   settle_invoice(salt, amount:u64)
+ *   make_payment(record, amount:u64, merchant)
+ *   make_payment_usdcx(record, amount:u128, merchant, [proof,proof])
+ */
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet } from "@provablehq/aleo-wallet-adaptor-react";
+import {
+  PROGRAM_ID,
+  USDCX_PROGRAM_ID,
+  buildUsdcxProofs,
+  stringToField,
+} from "../utils/aleo-utils";
 import {
   buildPaymentUrl,
   generatePaymentSecret,
   generateSalt,
   toMicrocredits,
-  USDCX_PROGRAM_ID,
-  STEALTHPAY_PROGRAM_ID,
   type CreateInvoiceParams,
   type PayInvoiceParams,
   type SettleInvoiceParams,
 } from "../services/stealthpay";
 
-const PROGRAM_ID = STEALTHPAY_PROGRAM_ID;
 const CREDITS_PROGRAM_ID = "credits.aleo";
 
-// ─── Local shield ledger ───────────────────────────────────────────────────
-// Tracks optimistic private balances per address in localStorage so the UI
-// shows the correct balance immediately after shielding, even while the Leo
-// Wallet extension is still scanning blocks to discover the new record.
-// Once the wallet actually returns records, the ledger is cleared and the
-// real wallet balance takes over.
+// ─── Optimistic Ledger ───────────────────────────────────────────────────────
+// Tracks estimated private balances in localStorage so the UI shows the right
+// balance immediately after shielding, before the wallet extension syncs.
+
 interface Ledger { credits: number; usdcx: number; }
 const LEDGER_KEY = (addr: string) => `sp-ledger-${addr}`;
 
@@ -50,7 +67,11 @@ function clearLedgerField(addr: string, field: keyof Ledger) {
   saveLedger(addr, l);
 }
 
+// ─── Types ───────────────────────────────────────────────────────────────────
+
 export type TxStatus = "idle" | "pending" | "success" | "error";
+
+// ─── Hook ────────────────────────────────────────────────────────────────────
 
 export function useStealthPay() {
   const { address, executeTransaction, requestRecords, transactionStatus } = useWallet();
@@ -62,6 +83,7 @@ export function useStealthPay() {
   const [usdcxPublicBalance, setUsdcxPublicBalance] = useState<number | null>(null);
   const [usdcxPrivateBalance, setUsdcxPrivateBalance] = useState<number | null>(null);
   const [recordError, setRecordError] = useState<string | null>(null);
+
   const [pendingShieldAmount, setPendingShieldAmountRaw] = useState<number>(() => {
     try { return parseFloat(localStorage.getItem("sp-pending-shield") ?? "0") || 0; } catch { return 0; }
   });
@@ -93,7 +115,6 @@ export function useStealthPay() {
 
   const recordsAccessDenied = useRef(false);
 
-  // Reset denial flag when address changes
   useEffect(() => {
     recordsAccessDenied.current = false;
   }, [address]);
@@ -103,6 +124,137 @@ export function useStealthPay() {
     setTxId(null);
     setError(null);
   }, []);
+
+  // ─── Shared Helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Fetch the first usable private record for a program.
+   *
+   * Retries up to 3 times with a 1.5 s pause between attempts so that
+   * a freshly-shielded record that the wallet is still scanning can be
+   * found without immediately declaring "wallet_syncing".
+   */
+  // Parse microcredits/amount from any record shape the wallet adapter returns.
+  const parseMicrocreditsFromRecord = (rec: unknown): number => {
+    const r = rec as Record<string, unknown>;
+    // Direct field
+    if (typeof r?.microcredits === "number") return r.microcredits as number;
+    if (typeof r?.microcredits === "string")
+      return parseInt((r.microcredits as string).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
+    // Nested under .data
+    if (r?.data) {
+      const v = (r.data as Record<string, unknown>).microcredits;
+      if (typeof v === "number") return v;
+      if (typeof v === "string") return parseInt(String(v).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
+    }
+    // Plaintext / JSON string scan
+    const content = typeof rec === "string" ? rec : JSON.stringify(rec);
+    const m = content.match(/microcredits:\s*(?:"|')?(\d[\d_]*)u\d+/);
+    return m ? parseInt(m[1].replace(/_/g, "")) : 0;
+  };
+
+  const getFirstRecord = useCallback(
+    async (program: string, requiredMicrocredits = 0): Promise<string | null> => {
+      if (!requestRecords) return null;
+
+      // Wrap any requestRecords call so it can't hang forever.
+      // If the wallet service worker is suspended the promise never resolves;
+      // this races it against a rejection timer so we always get an answer.
+      const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
+        Promise.race([
+          p,
+          new Promise<T>((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`requestRecords timeout after ${ms}ms`)),
+              ms
+            )
+          ),
+        ]);
+
+      // tryFetch returns the first non-empty records array found.
+      // It also tracks whether every single call timed out — if so, the wallet
+      // service worker is suspended and there is no point retrying the outer loop.
+      const tryFetch = async (): Promise<{ records: unknown[]; walletHung: boolean }> => {
+        const CALL_TIMEOUT = 5_000; // 5 s per individual call
+        let timedOutCount = 0;
+
+        const isTimeout = (e: unknown) =>
+          e instanceof Error && e.message.includes("timeout");
+
+        // IMPORTANT: try `true` first — this is what refreshBalances uses and
+        // is the call we know returns records when the balance shows on dashboard.
+        // `true` = full scan / include all records (wallet-adapter dependent).
+        try {
+          const r = await withTimeout(requestRecords(program, true), CALL_TIMEOUT);
+          if (Array.isArray(r) && r.length) return { records: r, walletHung: false };
+        } catch (e) { if (isTimeout(e)) timedOutCount++; }
+        // Fallback: try with `false` (unspent-only in some adapters)
+        try {
+          const r = await withTimeout(requestRecords(program, false), CALL_TIMEOUT);
+          if (Array.isArray(r) && r.length) return { records: r, walletHung: false };
+        } catch (e) { if (isTimeout(e)) timedOutCount++; }
+        // Last resort: no argument (some adapters default to all unspent)
+        try {
+          const r = await withTimeout(
+            (requestRecords as (p: string) => Promise<unknown[]>)(program),
+            CALL_TIMEOUT
+          );
+          if (Array.isArray(r) && r.length) return { records: r, walletHung: false };
+        } catch (e) { if (isTimeout(e)) timedOutCount++; }
+
+        // If all 3 calls timed out the wallet is completely unresponsive — bail
+        // immediately rather than retrying 7 more times (which would add another
+        // ~3 minutes of waiting).
+        return { records: [], walletHung: timedOutCount === 3 };
+      };
+
+      // Retry up to 8× with 2 s gaps (≤16 s total) ONLY when the wallet is
+      // responsive but the record hasn't appeared yet (e.g. waiting for block scan).
+      // If the wallet is hung (all calls timed out) we exit immediately.
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const { records, walletHung } = await tryFetch();
+        if (walletHung) break; // wallet suspended — return null so UI shows error
+        if (records.length) {
+          // Pick the record with the highest balance — not just records[0].
+          // This ensures we never pass an insufficient record to transfer_private,
+          // which would cause an on-chain rejection if balance < payment amount.
+          const best = records.reduce((prev: unknown, curr: unknown) => {
+            return parseMicrocreditsFromRecord(curr) >= parseMicrocreditsFromRecord(prev)
+              ? curr
+              : prev;
+          }, records[0]);
+
+          // If caller specified a required amount, verify the best record covers it.
+          if (requiredMicrocredits > 0) {
+            const bestBalance = parseMicrocreditsFromRecord(best);
+            if (bestBalance < requiredMicrocredits) {
+              // Record found but balance is too low — keep retrying; the wallet
+              // may not have finished scanning all records yet.
+              if (attempt < 7) {
+                await new Promise<void>((res) => setTimeout(res, 2_000));
+                continue;
+              }
+              // After max retries: return null so callers show "not enough funds"
+              return null;
+            }
+          }
+
+          return typeof best === "string" ? best : JSON.stringify(best);
+        }
+        if (attempt < 7) {
+          await new Promise<void>((res) => setTimeout(res, 2_000));
+        }
+      }
+
+      return null;
+    },
+    [requestRecords]
+  );
+
+  // ─── create_invoice ────────────────────────────────────────────────────────
+  //
+  // Contract: create_invoice(merchant, amount:u64, salt, memo, expiry_hours:u32, invoice_type:u8)
+  // Contract: create_invoice_usdcx(merchant, amount:u128, salt, memo, expiry_hours:u32, invoice_type:u8)
 
   const createInvoice = useCallback(
     async (params: CreateInvoiceParams) => {
@@ -120,39 +272,72 @@ export function useStealthPay() {
           merchant,
           amountMicrocredits,
           salt,
-          expiryHours = 24,
+          memo = "",
+          expiryHours = 0,
           invoiceType = 0,
           tokenType = 0,
         } = params;
 
         const isUsdcx = tokenType === 1;
         const functionName = isUsdcx ? "create_invoice_usdcx" : "create_invoice";
-        const amountStr = isUsdcx ? `${amountMicrocredits}u128` : `${amountMicrocredits}u64`;
+        const amountStr = isUsdcx
+          ? `${BigInt(amountMicrocredits)}u128`
+          : `${amountMicrocredits}u64`;
 
-        const result = await executeTransaction({
-          program: PROGRAM_ID,
-          function: functionName,
-          inputs: [
-            merchant,
-            amountStr,
-            salt,
-            `${expiryHours}u32`,
-            `${invoiceType}u8`,
-          ],
-          fee: 0.001,
-          privateFee: false,
-        });
+        // Encode memo as a field (empty string → 0field)
+        const memoField = memo ? stringToField(memo) : "0field";
+
+        // Compute paymentUrl upfront — it's locally derived and doesn't need the tx
+        const paymentUrl = buildPaymentUrl(
+          window.location.origin,
+          merchant,
+          String(amountMicrocredits / 1_000_000),
+          salt,
+          tokenType
+        );
+
+        let result: { transactionId?: string } | null | undefined = undefined;
+        try {
+          result = await executeTransaction({
+            program: PROGRAM_ID,
+            function: functionName,
+            inputs: [
+              merchant,           // private merchant: address
+              amountStr,          // private amount: u64 | u128
+              salt,               // private salt: field
+              memoField,          // private memo: field   ← REQUIRED
+              `${expiryHours}u32`,// public expiry_hours: u32
+              `${invoiceType}u8`, // public invoice_type: u8
+            ],
+            fee: 100_000,
+            privateFee: false,
+          });
+        } catch (txErr) {
+          // Shield wallet sometimes throws "No response" when its background
+          // service worker is suspended by the browser, but the transaction
+          // may have already been submitted to the network.  In that case we
+          // return a partial result so the UI can still show the payment URL
+          // and poll the on-chain salt_to_invoice mapping for confirmation.
+          const errMsg = txErr instanceof Error ? txErr.message : String(txErr);
+          const isNoResponse =
+            errMsg.toLowerCase().includes("no response") ||
+            errMsg.toLowerCase().includes("timed out");
+
+          if (isNoResponse) {
+            console.warn(
+              "[useStealthPay] Wallet 'No response' on create_invoice — " +
+              "transaction may have been submitted. Falling back to salt-based polling."
+            );
+            // Keep status as "pending" so the UI knows to keep polling
+            setTxId(null);
+            return { transactionId: "", paymentUrl, noResponse: true as const };
+          }
+          throw txErr; // Re-throw any other wallet errors
+        }
 
         if (result?.transactionId) {
           setTxId(result.transactionId);
           setStatus("success");
-          const paymentUrl = buildPaymentUrl(
-            window.location.origin,
-            merchant,
-            String(amountMicrocredits / 1_000_000),
-            salt,
-            tokenType
-          );
           return { transactionId: result.transactionId, paymentUrl };
         }
 
@@ -160,14 +345,18 @@ export function useStealthPay() {
         setStatus("error");
         return null;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Create invoice failed";
-        setError(msg);
+        setError(err instanceof Error ? err.message : "Create invoice failed");
         setStatus("error");
         return null;
       }
     },
     [address, executeTransaction]
   );
+
+  // ─── pay_invoice ──────────────────────────────────────────────────────────
+  //
+  // Contract: pay_invoice(record, merchant, amount:u64, salt, payment_secret, message)
+  // Contract: pay_invoice_usdcx(record, merchant, amount:u128, salt, payment_secret, message, [proof, proof])
 
   const payInvoice = useCallback(
     async (params: PayInvoiceParams) => {
@@ -188,60 +377,77 @@ export function useStealthPay() {
           paymentSecret,
           message = "0field",
           tokenType = 0,
+          isDonation = false,
         } = params;
 
         const isUsdcx = tokenType === 1;
         const fetchProgram = isUsdcx ? USDCX_PROGRAM_ID : CREDITS_PROGRAM_ID;
 
-        // Try non-plaintext first, then plaintext as fallback (wallet API shape varies)
-        let records = await requestRecords(fetchProgram, false);
-        if (!records?.length) {
-          try { records = await requestRecords(fetchProgram, true); } catch {}
-        }
-        if (!records || records.length === 0) {
-          const ledger = address ? getLedger(address) : { credits: 0, usdcx: 0 };
-          const hasPendingBalance = isUsdcx ? ledger.usdcx > 0 : ledger.credits > 0;
-          setError(hasPendingBalance ? "wallet_syncing" : `No ${isUsdcx ? "USDCx" : "credits"} records found. Please shield credits first.`);
+        // Pass requiredMicrocredits so getFirstRecord picks a record that can
+        // actually cover the payment — prevents on-chain "balance insufficient" rejection.
+        const recordStr = await getFirstRecord(fetchProgram, amountMicrocredits);
+        if (!recordStr) {
+          const ledger = getLedger(address);
+          const hasPending = isUsdcx ? ledger.usdcx > 0 : ledger.credits > 0;
+          setError(hasPending
+            ? "wallet_syncing"
+            : `No ${isUsdcx ? "USDCx" : "credits"} records found. Please shield credits first.`
+          );
           setStatus("error");
           return null;
         }
 
-        const record = records[0];
-        let recordStr = typeof record === "string" ? record : JSON.stringify(record);
+        const amountStr = isUsdcx
+          ? `${BigInt(amountMicrocredits)}u128`
+          : `${amountMicrocredits}u64`;
 
-        // Standard inputs
-        const inputs = [
-          recordStr,
-          merchant,
-          isUsdcx ? `${amountMicrocredits}u128` : `${amountMicrocredits}u64`,
-          salt,
-          paymentSecret,
-          message,
+        // Build inputs matching the exact contract parameter order
+        const inputs: string[] = [
+          recordStr,      // pay_record: credits/Token
+          merchant,       // merchant: address
+          amountStr,      // amount: u64 | u128
+          salt,           // salt: field
+          paymentSecret,  // private payment_secret: field
+          message,        // public message: field
         ];
 
+        let functionName: string;
+        if (isDonation) {
+          functionName = isUsdcx ? "pay_donation_usdcx" : "pay_donation";
+        } else {
+          functionName = isUsdcx ? "pay_invoice_usdcx" : "pay_invoice";
+        }
+
+        // USDCx functions require a [MerkleProof; 2] as the last argument
         if (isUsdcx) {
-          // Add Merkle Proof array for USDCx.
-          // In a fully robust implementation, we would construct or fetch
-          // the legitimate Merkle Proof of the USDCx freeze list.
-          // For simplicity in this integration, if actual proofs aren't required to pass the UI check,
-          // we mock it here. If required, we would invoke the generated proofs utility.
-          
-          // Using a mock default empty array of fields for the proof to satisfy the Leo type: [MerkleProof; 2]
-          const mockProof = `{ siblings: [0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field], leaf_index: 0u32 }`;
-          inputs.push(`[${mockProof}, ${mockProof}]`);
+          const proofsStr = await buildUsdcxProofs();
+          inputs.push(proofsStr);
         }
 
         const result = await executeTransaction({
           program: PROGRAM_ID,
-          function: isUsdcx ? "pay_invoice_usdcx" : "pay_invoice",
+          function: functionName,
           inputs,
-          fee: isUsdcx ? 0.05 : 0.001, // USDCx typically has higher instructions
+          fee: 100_000,
           privateFee: false,
         });
 
         if (result?.transactionId) {
           setTxId(result.transactionId);
           setStatus("success");
+
+          // Deduct from the optimistic ledger so the dashboard immediately
+          // reflects the reduced balance while the wallet scans the change record.
+          if (address) {
+            const amountCreditsSpent = amountMicrocredits / 1_000_000;
+            const next = adjustLedger(
+              address,
+              isUsdcx ? { usdcx: -amountCreditsSpent } : { credits: -amountCreditsSpent }
+            );
+            if (isUsdcx) setUsdcxPrivateBalance(Math.max(0, next.usdcx));
+            else setPrivateBalance(Math.max(0, next.credits));
+          }
+
           return { transactionId: result.transactionId };
         }
 
@@ -249,14 +455,17 @@ export function useStealthPay() {
         setStatus("error");
         return null;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Pay invoice failed";
-        setError(msg);
+        setError(err instanceof Error ? err.message : "Pay invoice failed");
         setStatus("error");
         return null;
       }
     },
-    [address, executeTransaction, requestRecords]
+    [address, executeTransaction, requestRecords, getFirstRecord]
   );
+
+  // ─── settle_invoice ───────────────────────────────────────────────────────
+  //
+  // Contract: settle_invoice(public salt: field, private amount: u64)
 
   const settleInvoice = useCallback(
     async (params: SettleInvoiceParams) => {
@@ -275,8 +484,11 @@ export function useStealthPay() {
         const result = await executeTransaction({
           program: PROGRAM_ID,
           function: "settle_invoice",
-          inputs: [salt, `${amountMicrocredits}u64`],
-          fee: 0.001,
+          inputs: [
+            salt,                       // public salt: field
+            `${amountMicrocredits}u64`, // private amount: u64
+          ],
+          fee: 100_000,
           privateFee: false,
         });
 
@@ -290,8 +502,7 @@ export function useStealthPay() {
         setStatus("error");
         return null;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Settle invoice failed";
-        setError(msg);
+        setError(err instanceof Error ? err.message : "Settle invoice failed");
         setStatus("error");
         return null;
       }
@@ -299,63 +510,10 @@ export function useStealthPay() {
     [address, executeTransaction]
   );
 
-  /** Convert public funds to private records. Required before private transactions if wallet has no private balance. */
-  const convertPublicToPrivate = useCallback(
-    async (amount: number, tokenType = 0) => {
-      if (!address || !executeTransaction) {
-        setError("Wallet not connected");
-        setStatus("error");
-        return null;
-      }
-
-      setStatus("pending");
-      setError(null);
-
-      try {
-        const isUsdcx = tokenType === 1;
-        const program = isUsdcx ? USDCX_PROGRAM_ID : CREDITS_PROGRAM_ID;
-        // USDCx uses u128, Credits uses u64. Both use 6 decimal places in this implementation.
-        const amountStr = isUsdcx ? `${amount * 1_000_000}u128` : `${amount * 1_000_000}u64`;
-
-        const result = await executeTransaction({
-          program,
-          function: "transfer_public_to_private",
-          inputs: [address, amountStr],
-          fee: 0.001,
-          privateFee: false,
-        });
-
-        if (result?.transactionId) {
-          setTxId(result.transactionId);
-          setStatus("success");
-          // Update local ledger immediately so the balance shows before the
-          // wallet extension has finished scanning the new private record.
-          if (address) {
-            const next = adjustLedger(address, isUsdcx ? { usdcx: amount } : { credits: amount });
-            if (isUsdcx) {
-              setUsdcxPrivateBalance(next.usdcx);
-              setPendingUsdcxAmount((prev) => prev + amount);
-            } else {
-              setPrivateBalance(next.credits);
-              setPendingShieldAmount((prev) => prev + amount);
-            }
-          }
-          return { transactionId: result.transactionId };
-        }
-
-        setError("Conversion failed");
-        setStatus("error");
-        return null;
-      } catch (err) {
-        const msg =
-          err instanceof Error ? err.message : "Convert to private failed";
-        setError(msg);
-        setStatus("error");
-        return null;
-      }
-    },
-    [address, executeTransaction]
-  );
+  // ─── make_payment ─────────────────────────────────────────────────────────
+  //
+  // Contract: make_payment(sender_record: credits, amount: u64, merchant: address)
+  // Contract: make_payment_usdcx(sender_record: Token, amount: u128, merchant: address, proofs: [MerkleProof; 2])
 
   const makePayment = useCallback(
     async (merchant: string, amountCredits: number, tokenType = 0) => {
@@ -370,53 +528,54 @@ export function useStealthPay() {
       setError(null);
 
       try {
-        const amountMicrocredits = isUsdcx ? BigInt(Math.round(amountCredits * 1_000_000)) : toMicrocredits(amountCredits);
+        const amountRaw = isUsdcx
+          ? BigInt(Math.round(amountCredits * 1_000_000))
+          : BigInt(toMicrocredits(amountCredits));
         const fetchProgram = isUsdcx ? USDCX_PROGRAM_ID : CREDITS_PROGRAM_ID;
 
-        // Try non-plaintext first, then plaintext as fallback
-        let records = await requestRecords(fetchProgram, false);
-        if (!records?.length) {
-          try { records = await requestRecords(fetchProgram, true); } catch {}
-        }
-        if (!records || records.length === 0) {
-          const ledger = address ? getLedger(address) : { credits: 0, usdcx: 0 };
-          const hasPendingBalance = isUsdcx ? ledger.usdcx > 0 : ledger.credits > 0;
-          setError(hasPendingBalance ? "wallet_syncing" : `No ${isUsdcx ? "USDCx" : "credits"} records found. Please shield credits first.`);
+        const recordStr = await getFirstRecord(fetchProgram);
+        if (!recordStr) {
+          const ledger = getLedger(address);
+          const hasPending = isUsdcx ? ledger.usdcx > 0 : ledger.credits > 0;
+          setError(hasPending
+            ? "wallet_syncing"
+            : `No ${isUsdcx ? "USDCx" : "credits"} records found. Please shield credits first.`
+          );
           setStatus("error");
           return null;
         }
 
-        const record = records[0];
-        const recordStr =
-          typeof record === "string" ? record : JSON.stringify(record);
+        const amountStr = isUsdcx ? `${amountRaw}u128` : `${amountRaw}u64`;
 
-        const inputs = [
-          recordStr,
-          isUsdcx ? `${amountMicrocredits}u128` : `${amountMicrocredits}u64`,
-          merchant,
+        // Exact contract parameter order: (record, amount, merchant)
+        const inputs: string[] = [
+          recordStr,  // sender_record: credits | Token
+          amountStr,  // amount: u64 | u128
+          merchant,   // merchant: address
         ];
 
+        // USDCx requires Merkle proofs as final argument
         if (isUsdcx) {
-          const mockProof = `{ siblings: [0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field, 0field], leaf_index: 0u32 }`;
-          inputs.push(`[${mockProof}, ${mockProof}]`);
+          const proofsStr = await buildUsdcxProofs();
+          inputs.push(proofsStr);
         }
 
         const result = await executeTransaction({
           program: PROGRAM_ID,
           function: isUsdcx ? "make_payment_usdcx" : "make_payment",
           inputs,
-          fee: 0.1,
+          fee: 100_000,
           privateFee: false,
         });
 
         if (result?.transactionId) {
           setTxId(result.transactionId);
           setStatus("success");
-          // Deduct from local ledger so the displayed balance stays accurate.
+          // Deduct from local ledger optimistically
           if (address) {
-            const next = adjustLedger(address, isUsdcx
-              ? { usdcx: -amountCredits }
-              : { credits: -amountCredits }
+            const next = adjustLedger(
+              address,
+              isUsdcx ? { usdcx: -amountCredits } : { credits: -amountCredits }
             );
             if (isUsdcx) setUsdcxPrivateBalance(next.usdcx);
             else setPrivateBalance(next.credits);
@@ -428,174 +587,232 @@ export function useStealthPay() {
         setStatus("error");
         return null;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Payment failed";
-        setError(msg);
+        setError(err instanceof Error ? err.message : "Payment failed");
         setStatus("error");
         return null;
       }
     },
-    [address, executeTransaction, requestRecords]
+    [address, executeTransaction, requestRecords, getFirstRecord]
   );
 
+  // ─── convertPublicToPrivate ───────────────────────────────────────────────
+  //
+  // Calls transfer_public_to_private on credits.aleo or test_usdcx_stablecoin.aleo
+  // to shield public funds into a private record.
+
+  const convertPublicToPrivate = useCallback(
+    async (amount: number, tokenType = 0) => {
+      if (!address || !executeTransaction) {
+        setError("Wallet not connected");
+        setStatus("error");
+        return null;
+      }
+
+      setStatus("pending");
+      setError(null);
+
+      try {
+        const isUsdcx = tokenType === 1;
+        const program = isUsdcx ? USDCX_PROGRAM_ID : CREDITS_PROGRAM_ID;
+        const amountStr = isUsdcx
+          ? `${Math.round(amount * 1_000_000)}u128`
+          : `${Math.round(amount * 1_000_000)}u64`;
+
+        const result = await executeTransaction({
+          program,
+          function: "transfer_public_to_private",
+          inputs: [address, amountStr],
+          fee: 100_000,
+          privateFee: false,
+        });
+
+        if (result?.transactionId) {
+          setTxId(result.transactionId);
+          setStatus("success");
+          if (address) {
+            const next = adjustLedger(address, isUsdcx ? { usdcx: amount } : { credits: amount });
+            if (isUsdcx) {
+              setUsdcxPrivateBalance(next.usdcx);
+              setPendingUsdcxAmount((p) => p + amount);
+            } else {
+              setPrivateBalance(next.credits);
+              setPendingShieldAmount((p) => p + amount);
+            }
+          }
+          return { transactionId: result.transactionId };
+        }
+
+        setError("Conversion failed");
+        setStatus("error");
+        return null;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Convert to private failed");
+        setStatus("error");
+        return null;
+      }
+    },
+    [address, executeTransaction]
+  );
+
+  // ─── refreshBalances ──────────────────────────────────────────────────────
+
   const refreshBalances = useCallback(async () => {
-    if (!address || !requestRecords) {
-      console.log("refreshBalances: Wallet not connected or method missing");
-      return;
-    }
+    if (!address || !requestRecords) return;
+
+    const apiBases = [
+      "https://api.explorer.aleo.org/v1/testnet",
+      "https://api.explorer.provable.com/v1/testnet",
+      "https://api.provable.com/v2/testnet",
+    ];
 
     try {
-      // 1. Fetch Private Balance from unspent records
+      // 1. Private credits balance from records
       if (!recordsAccessDenied.current) {
-        try {
-          const isPermissionDenied = (e: unknown) =>
-            e instanceof Error && (e.message.includes("NOT_GRANTED") || e.message.includes("not granted") || e.message.includes("permission"));
+        // Same timeout guard as getFirstRecord — prevents balance refresh from
+        // freezing the UI when the wallet service worker is suspended.
+        const raceTimeout = <T>(p: Promise<T>, ms = 10_000): Promise<T> =>
+          Promise.race([
+            p,
+            new Promise<T>((_, reject) =>
+              setTimeout(
+                () => reject(new Error(`requestRecords timeout after ${ms}ms`)),
+                ms
+              )
+            ),
+          ]);
 
-          let records: any[] = [];
+        try {
+          const isPermDenied = (e: unknown) =>
+            e instanceof Error &&
+            (e.message.includes("NOT_GRANTED") ||
+              e.message.includes("not granted") ||
+              e.message.includes("permission"));
+
+          let records: unknown[] = [];
           try {
-            const fetched = await requestRecords("credits.aleo", true);
+            const fetched = await raceTimeout(requestRecords("credits.aleo", true));
             records = Array.isArray(fetched) ? fetched : [];
-            console.log("Found records:", records.length);
           } catch (e) {
-            console.warn("Records request failed:", e);
-            if (isPermissionDenied(e)) throw e;
-            const fallbackFetched = await requestRecords("credits.aleo");
-            records = Array.isArray(fallbackFetched) ? fallbackFetched : [];
+            if (isPermDenied(e)) throw e;
+            const fb = await raceTimeout(requestRecords("credits.aleo"));
+            records = Array.isArray(fb) ? fb : [];
           }
 
-          // Parse microcredits out of a record regardless of wallet format
-          const parseMicro = (rec: any, field: "microcredits" | "amount"): number => {
-            if (rec && typeof rec[field] === 'number') return rec[field];
-            if (rec && typeof rec[field] === 'string')
-              return parseInt((rec[field] as string).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
-            if (rec?.data?.[field]) {
-              const v = rec.data[field];
-              return typeof v === 'number' ? v : parseInt(String(v).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
+          const parseMicro = (rec: unknown, field: "microcredits" | "amount"): number => {
+            const r = rec as Record<string, unknown>;
+            if (typeof r?.[field] === "number") return r[field] as number;
+            if (typeof r?.[field] === "string")
+              return parseInt((r[field] as string).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
+            if (r?.data) {
+              const v = (r.data as Record<string, unknown>)[field];
+              return typeof v === "number" ? v : parseInt(String(v).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
             }
-            const content = typeof rec === 'string' ? rec : JSON.stringify(rec);
+            const content = typeof rec === "string" ? rec : JSON.stringify(rec);
             const m = content.match(new RegExp(`${field}:\\s*(?:"|')?([\\d_]+)u\\d+`));
             return m ? parseInt(m[1].replace(/_/g, "")) : 0;
           };
 
           if (records.length > 0) {
-            // Wallet has finished scanning — use real records and clear local ledger
-            const totalMicro = records.reduce((s: number, r: any) => s + parseMicro(r, "microcredits"), 0);
-            const walletBalance = totalMicro / 1_000_000;
-            console.log("Wallet private balance (from records):", walletBalance);
+            // Wallet has scanned the record — use the real on-chain total.
+            const total = records.reduce((s: number, r: unknown) => s + parseMicro(r, "microcredits"), 0);
             if (address) clearLedgerField(address, "credits");
-            setPrivateBalance(walletBalance);
-
-            setPendingShieldAmount(0);
-            setRecordError(null);
+            setPrivateBalance(total / 1_000_000);
+            setPendingShieldAmount(0); // clear the pending badge — record is confirmed
           } else {
-            // Wallet hasn't synced yet — show ledger estimate so the balance
-            // doesn't go blank after a successful shield transaction.
-            const ledger = address ? getLedger(address) : { credits: 0, usdcx: 0 };
-            console.log("No wallet records yet; using ledger estimate:", ledger.credits);
-            setPrivateBalance(ledger.credits);
-            setRecordError(null);
+            // Wallet hasn't scanned the block yet.
+            // Show 0 as the confirmed spendable balance so the dashboard doesn't
+            // double-count with the pending (+X) badge.  The badge alone conveys
+            // that funds are on their way.
+            setPrivateBalance(0);
           }
+          setRecordError(null);
 
-          // 1b. Fetch USDCx Private Balance
+          // 1b. Private USDCx balance
           try {
-            const usdcxRecords = (await requestRecords(USDCX_PROGRAM_ID, true)) as any[];
-            if (usdcxRecords.length > 0) {
-              const usdcxTotal = usdcxRecords.reduce((s: number, r: any) => s + parseMicro(r, "amount"), 0);
-              const walletBalance = usdcxTotal / 1_000_000;
+            const uRecs = (await raceTimeout(requestRecords(USDCX_PROGRAM_ID, true))) as unknown[];
+            if (uRecs?.length > 0) {
+              const total = uRecs.reduce((s: number, r: unknown) => s + parseMicro(r, "amount"), 0);
               if (address) clearLedgerField(address, "usdcx");
-              setUsdcxPrivateBalance(walletBalance);
+              setUsdcxPrivateBalance(total / 1_000_000);
               setPendingUsdcxAmount(0);
             } else {
-              const ledger = address ? getLedger(address) : { credits: 0, usdcx: 0 };
-              setUsdcxPrivateBalance(ledger.usdcx);
+              setUsdcxPrivateBalance(address ? getLedger(address).usdcx : 0);
             }
-          } catch (e) {
-            console.warn("USDCx private record fetch failed", e);
+          } catch {
             setUsdcxPrivateBalance(address ? getLedger(address).usdcx : 0);
           }
         } catch (recErr) {
           const isDenied =
             recErr instanceof Error &&
-            (recErr.message.includes("NOT_GRANTED") || recErr.message.includes("not granted") || recErr.message.includes("permission"));
+            (recErr.message.includes("NOT_GRANTED") ||
+              recErr.message.includes("not granted") ||
+              recErr.message.includes("permission"));
           if (isDenied) {
             recordsAccessDenied.current = true;
             setRecordError("Wallet record access not granted. Open Leo Wallet → Settings → allow record access.");
           } else {
-            console.error("Shielded records fetching error:", recErr);
             setRecordError("Failed to fetch shielded records.");
           }
           setPrivateBalance(null);
         }
       }
 
-      // 2. Fetch Public Balance from Aleo Mapping
-      const apiBases = [
-        "https://api.explorer.aleo.org/v1/testnet",
-        "https://api.explorer.provable.com/v1/testnet",
-        "https://api.explorer.aleo.org/v1/testnet3",
-      ];
-
-      let publicBalanceFound = false;
+      // 2. Public credits balance
+      let publicFound = false;
       for (const base of apiBases) {
         try {
           const res = await fetch(`${base}/program/credits.aleo/mapping/account/${address}`);
           if (res.ok) {
-            const publicMicroStr = await res.json(); 
-            if (publicMicroStr !== null) {
-              const publicMicro = parseInt(publicMicroStr.replace("u64", ""));
-              setPublicBalance(publicMicro / 1_000_000);
-              publicBalanceFound = true;
+            const raw = await res.json();
+            if (raw !== null) {
+              setPublicBalance(parseInt(String(raw).replace("u64", "").replace(/_/g, "")) / 1_000_000);
+              publicFound = true;
               break;
             }
           } else if (res.status === 404) {
-            // Mapping does not exist for this address => 0 balance
             setPublicBalance(0);
-            publicBalanceFound = true;
+            publicFound = true;
             break;
           }
-        } catch (e) {
-          console.warn(`Fetch from ${base} failed:`, e);
-        }
+        } catch {}
       }
+      if (!publicFound) setPublicBalance(0);
 
-      if (!publicBalanceFound) {
-        setPublicBalance(0);
-      }
-
-      // 3. Fetch USDCx Public Balance
-      let usdcxBalanceFound = false;
+      // 3. Public USDCx balance
+      let usdcxFound = false;
       for (const base of apiBases) {
         try {
           const res = await fetch(`${base}/program/${USDCX_PROGRAM_ID}/mapping/balances/${address}`);
           if (res.ok) {
-            const publicMicroStr = await res.json(); 
-            if (publicMicroStr !== null) {
-              const publicMicro = parseInt(publicMicroStr.replace("u128", "").replace(/_/g, ""));
-              setUsdcxPublicBalance(publicMicro / 1_000_000);
-              usdcxBalanceFound = true;
+            const raw = await res.json();
+            if (raw !== null) {
+              setUsdcxPublicBalance(parseInt(String(raw).replace("u128", "").replace(/_/g, "")) / 1_000_000);
+              usdcxFound = true;
               break;
             }
           } else if (res.status === 404) {
-             setUsdcxPublicBalance(0);
-             usdcxBalanceFound = true;
-             break;
+            setUsdcxPublicBalance(0);
+            usdcxFound = true;
+            break;
           }
-        } catch (e) {
-          console.warn(`Fetch USDCx from ${base} failed:`, e);
-        }
+        } catch {}
       }
-      if (!usdcxBalanceFound) setUsdcxPublicBalance(0);
-
+      if (!usdcxFound) setUsdcxPublicBalance(0);
     } catch (err) {
-      console.error("Critical balance refresh error:", err);
+      console.error("Balance refresh error:", err);
     }
   }, [address, requestRecords]);
 
+  // ─── Return ───────────────────────────────────────────────────────────────
+
   return {
+    // On-chain actions
     createInvoice,
     payInvoice,
     settleInvoice,
     makePayment,
     convertPublicToPrivate,
+    // Balance
     refreshBalances,
     publicBalance,
     privateBalance,
@@ -606,10 +823,12 @@ export function useStealthPay() {
     setPendingShieldAmount,
     pendingUsdcxAmount,
     setPendingUsdcxAmount,
+    // TX state
     status,
     txId,
     error,
     reset,
+    // Utilities
     generateSalt,
     generatePaymentSecret,
     transactionStatus,

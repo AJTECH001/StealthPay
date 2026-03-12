@@ -24,7 +24,6 @@ export default function Explorer() {
     pendingShieldAmount,
     setPendingShieldAmount,
     pendingUsdcxAmount,
-    setPendingUsdcxAmount,
     convertPublicToPrivate,
     transactionStatus
   } = useStealthPay();
@@ -103,11 +102,19 @@ export default function Explorer() {
 
     fetchData();
 
-    // Set up polling interval for real-time updates
-    const pollInterval = setInterval(fetchData, 8000);
+    // Poll invoices/stats every 8 s for real-time updates
+    const pollInterval = setInterval(fetchData, 8_000);
 
     if (address) {
+      // Fetch balances immediately on mount / address change …
       refreshBalances();
+      // … then every 30 s so the user always sees live balances
+      const balanceInterval = setInterval(refreshBalances, 30_000);
+      return () => {
+        cancelled = true;
+        clearInterval(pollInterval);
+        clearInterval(balanceInterval);
+      };
     }
 
     return () => {
@@ -122,7 +129,7 @@ export default function Explorer() {
   useEffect(() => {
     if (!directResult || directResult.startsWith("at1") || !address) return;
 
-    let timer: NodeJS.Timeout;
+    let timer: ReturnType<typeof setTimeout>;
     let cancelled = false;
 
     const poll = async () => {
@@ -255,6 +262,7 @@ export default function Explorer() {
             </div>
 
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+              {/* Shielded Credits */}
               <GlassCard className="p-8 flex flex-col justify-between group overflow-hidden relative">
                 <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
                   <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -266,27 +274,42 @@ export default function Explorer() {
                     <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
                     <span className="text-[10px] uppercase tracking-[0.25em] font-bold text-slate-5 text-nowrap">Shielded Credits</span>
                   </div>
-                  <div className="text-4xl font-serif italic text-white flex items-baseline gap-2">
-                    {privateBalance !== null ? privateBalance.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
+                  <div className="text-4xl font-serif italic text-white flex items-baseline gap-2 flex-wrap">
+                    {(privateBalance ?? 0) > 0
+                      ? (privateBalance as number).toLocaleString(undefined, { minimumFractionDigits: 2 })
+                      : pendingShieldAmount > 0
+                        ? <span className="text-white/30">0.00</span>
+                        : "0.00"}
                     <span className="text-sm font-sans not-italic text-slate-11 uppercase tracking-widest font-medium">Credits</span>
-                    {pendingShieldAmount > 0 && (
-                      <motion.div 
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        className="text-[9px] font-sans not-italic bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded-full"
-                      >
-                        +{pendingShieldAmount.toFixed(2)}
-                      </motion.div>
-                    )}
                   </div>
+                  {pendingShieldAmount > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20"
+                      title="Shielded credits are on-chain but your wallet is still scanning the block. They will be spendable once the wallet finishes syncing (~1-2 min)."
+                    >
+                      <div className="w-2 h-2 rounded-full border border-amber-500/50 border-t-amber-500 animate-spin shrink-0" />
+                      <span className="text-[9px] font-bold text-amber-400">
+                        +{pendingShieldAmount.toFixed(2)} scanning — not yet spendable
+                      </span>
+                    </motion.div>
+                  )}
                   {recordError ? (
-                    <p className="text-[9px] text-amber-400/80 max-w-[220px] leading-tight mt-1">{recordError}</p>
+                    <p className="text-[9px] text-amber-400/80 max-w-[220px] leading-tight">{recordError}</p>
+                  ) : (privateBalance ?? 0) > 0 ? (
+                    <p className="text-[10px] text-slate-11">Ready to spend.</p>
+                  ) : pendingShieldAmount > 0 ? (
+                    <p className="text-[9px] text-slate-11 leading-tight">
+                      Open Leo Wallet to speed up block scanning.
+                    </p>
                   ) : (
                     <p className="text-[10px] text-slate-11">Private spending records.</p>
                   )}
                 </div>
               </GlassCard>
 
+              {/* Public Credits */}
               <GlassCard className="p-8 flex flex-col justify-between group overflow-hidden relative">
                 <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
                   <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -299,15 +322,17 @@ export default function Explorer() {
                     <span className="text-[10px] uppercase tracking-[0.25em] font-bold text-slate-5 text-nowrap">Public Balance</span>
                   </div>
                   <div className="text-4xl font-serif italic text-white/60 flex items-baseline gap-2">
-                    {publicBalance !== null ? publicBalance.toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}
+                    {publicBalance !== null
+                      ? publicBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })
+                      : <span className="text-white/20 text-2xl animate-pulse">loading…</span>}
                     <span className="text-sm font-sans not-italic text-slate-11 uppercase tracking-widest font-medium">Credits</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <p className="text-[10px] text-slate-11 whitespace-nowrap">Visible on ledger.</p>
                     {(publicBalance || 0) > 0 && (
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => {
                           setShieldingAmount(Math.min(30, publicBalance || 0).toString());
                           setShieldingTokenType(0);

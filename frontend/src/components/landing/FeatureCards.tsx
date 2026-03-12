@@ -22,7 +22,7 @@ export function FeatureCards() {
       description: "Deployed on Aleo testnet. Upgradable under admin policy. Built with Leo.",
       link: "#",
       tags: [
-        { label: "Program ID", value: "stealthpay_usdcx_v2.aleo" },
+        { label: "Program ID", value: "stealthpay_usdcx_v3.aleo" },
         { label: "Network", value: "Aleo Testnet" },
         { label: "Status", value: "Deployed" },
       ],

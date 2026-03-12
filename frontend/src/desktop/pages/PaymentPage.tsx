@@ -7,6 +7,7 @@ import { useStealthPay } from "../../hooks/useStealthPay";
 import { toMicrocredits, getExplorerTxUrl, getExplorerAddressUrl } from "../../services/stealthpay";
 import { api } from "../../services/api";
 import { motion, AnimatePresence } from "framer-motion";
+import { EXPLORER_BASES, PROGRAM_ID } from "../../utils/aleo-utils";
 
 function VerificationBlock({
   txId,
@@ -103,6 +104,25 @@ export default function PaymentPage() {
 
   const [backendSyncStatus, setBackendSyncStatus] = useState<"idle" | "success" | "failed">("idle");
 
+  // Program deployment check
+  const [programDeployed, setProgramDeployed] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      for (const base of EXPLORER_BASES) {
+        try {
+          const res = await fetch(`${base}/program/${PROGRAM_ID}`, { signal: AbortSignal.timeout(6_000) });
+          if (cancelled) return;
+          if (res.ok) { setProgramDeployed(true); return; }
+          if (res.status === 404) { setProgramDeployed(false); return; }
+        } catch { /* try next */ }
+      }
+      if (!cancelled) setProgramDeployed(null); // unknown
+    };
+    check();
+    return () => { cancelled = true; };
+  }, []);
+
   const [paymentResult, setPaymentResult] = useState<{
     transactionId: string;
   } | null>(() => {
@@ -171,19 +191,37 @@ export default function PaymentPage() {
     let cancelled = false;
     (async () => {
       try {
-        const invoice = await api.getInvoiceBySalt(salt, amountCredits);
-        await api.updateInvoice(invoice.invoice_hash, {
+        // Same race-condition guard as handlePay: create the invoice entry if it
+        // isn't in the DB yet (merchant's async backend sync may lag behind).
+        let invoiceHash: string;
+        try {
+          const invoice = await api.getInvoiceBySalt(salt, amountCredits);
+          invoiceHash = invoice.invoice_hash;
+        } catch {
+          const created = await api.createInvoice({
+            invoice_hash: salt,
+            merchant_address: merchant,
+            amount: amountCredits,
+            status: "PENDING",
+            salt,
+            token_type: tokenType,
+          });
+          invoiceHash = created.invoice_hash;
+        }
+
+        await api.updateInvoice(invoiceHash, {
           status: "SETTLED",
           payment_tx_ids: paymentResult.transactionId,
           payer_address: address,
         });
         if (!cancelled) setBackendSyncStatus("success");
       } catch (err) {
+        console.warn("Deferred backend sync failed (payment on-chain is unaffected):", err);
         if (!cancelled) setBackendSyncStatus("failed");
       }
     })();
     return () => { cancelled = true; };
-  }, [paymentResult, hasParams, merchant, salt, amountCredits, address, backendSyncStatus]);
+  }, [paymentResult, hasParams, merchant, salt, amountCredits, address, backendSyncStatus, tokenType]);
 
   // Poll for final on-chain transaction hash if only a temporary ID is known
   useEffect(() => {
@@ -191,7 +229,7 @@ export default function PaymentPage() {
     // Real on-chain Aleo tx IDs always start with "at1"
     if (!paymentResult?.transactionId || paymentResult.transactionId.startsWith("at1") || !address) return;
 
-    let timer: NodeJS.Timeout;
+    let timer: ReturnType<typeof setTimeout>;
     let cancelled = false;
 
     const poll = async () => {
@@ -247,6 +285,42 @@ export default function PaymentPage() {
     (error?.includes("No credits records") || error?.includes("No USDCx records"));
   const convertAmount = Math.max(amountCredits + 0.05, 0.25);
 
+  // Auto-retry when wallet is still scanning private records.
+  // getFirstRecord already retries 8× (up to 16 s) internally, but if all
+  // attempts fail we show the wallet_syncing state and auto-retry every 5 s.
+  const [syncRetryCountdown, setSyncRetryCountdown] = useState<number | null>(null);
+  const syncRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!isWalletSyncing) {
+      setSyncRetryCountdown(null);
+      if (syncRetryRef.current) clearTimeout(syncRetryRef.current);
+      return;
+    }
+
+    // Tick countdown from 5 → 0, then auto-retry aggressively
+    let seconds = 5;
+    setSyncRetryCountdown(seconds);
+
+    const tick = setInterval(() => {
+      seconds -= 1;
+      setSyncRetryCountdown(seconds);
+      if (seconds <= 0) {
+        clearInterval(tick);
+        setSyncRetryCountdown(null);
+        // Re-trigger payment — getFirstRecord will retry internally for 16 s
+        handlePayRef.current?.();
+      }
+    }, 1000);
+
+    return () => clearInterval(tick);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isWalletSyncing]);
+
+  // Stable ref so the countdown effect can call handlePay without
+  // recreating itself every render (avoids infinite loop).
+  const handlePayRef = useRef<(() => void) | null>(null);
+
   const handleConvertToPrivate = async () => {
     reset();
     setConvertResult(null);
@@ -260,6 +334,7 @@ export default function PaymentPage() {
 
   const handlePay = async () => {
     if (!hasParams || !merchant || !salt) return;
+    if (status === "pending") return; // already in-flight
 
     reset();
     setPaymentResult(null);
@@ -279,14 +354,36 @@ export default function PaymentPage() {
     if (txId) {
       setPaymentResult({ transactionId: txId });
       try {
-        const invoice = await api.getInvoiceBySalt(salt, amountCredits);
-        await api.updateInvoice(invoice.invoice_hash, {
+        // Try to look up the invoice the merchant created. If it isn't in the DB
+        // yet (merchant's backend sync is async and may still be in-flight), we
+        // create a minimal record so we can track the payment.
+        let invoiceHash: string;
+        try {
+          const invoice = await api.getInvoiceBySalt(salt, amountCredits);
+          invoiceHash = invoice.invoice_hash;
+        } catch {
+          // Invoice not in DB — create it now using salt as the primary key.
+          // This ensures the payment is always tracked even when the merchant's
+          // backend sync hasn't completed before the buyer pays.
+          const created = await api.createInvoice({
+            invoice_hash: salt,
+            merchant_address: merchant!,
+            amount: amountCredits,
+            status: "PENDING",
+            salt,
+            token_type: tokenType,
+          });
+          invoiceHash = created.invoice_hash;
+        }
+
+        await api.updateInvoice(invoiceHash, {
           status: "SETTLED",
           payment_tx_ids: txId,
           payer_address: address!,
         });
         setBackendSyncStatus("success");
       } catch (err) {
+        console.warn("Backend sync failed (payment still confirmed on-chain):", err);
         setBackendSyncStatus("failed");
       }
       requestAnimationFrame(() => {
@@ -294,6 +391,9 @@ export default function PaymentPage() {
       });
     }
   };
+
+  // Keep ref in sync so the auto-retry effect can call it without closure issues
+  useEffect(() => { handlePayRef.current = handlePay; });
 
   return (
     <div className="relative max-w-2xl mx-auto py-12">
@@ -451,15 +551,37 @@ export default function PaymentPage() {
                     )}
 
                     {isWalletSyncing && (
-                      <div className="p-6 rounded-3xl bg-amber-500/[0.03] border border-amber-500/10 space-y-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-4 h-4 rounded-full border-2 border-amber-500/40 border-t-amber-500 animate-spin shrink-0" />
-                          <p className="text-sm font-bold text-white">Shielded Balance Syncing</p>
+                      <div className="p-5 rounded-2xl bg-amber-500/[0.03] border border-amber-500/10 space-y-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full border-2 border-amber-500/40 border-t-amber-500 animate-spin shrink-0" />
+                            <p className="text-xs font-bold text-amber-400">
+                              Waiting for wallet to index shielded record
+                            </p>
+                          </div>
+                          {syncRetryCountdown !== null && (
+                            <span className="text-[10px] font-mono tabular-nums text-slate-5">
+                              Retrying in {syncRetryCountdown}s
+                            </span>
+                          )}
                         </div>
-                        <p className="text-xs text-slate-11 leading-relaxed">
-                          Your shielded balance exists but Leo Wallet is still scanning the block.
-                          Open the Leo Wallet extension to speed up sync, then tap <span className="text-white font-semibold">Confirm &amp; Pay</span> again.
+                        <p className="text-[11px] text-slate-11 leading-relaxed">
+                          Your shielded balance exists on-chain but the wallet hasn't finished
+                          scanning the block yet. <span className="text-white font-medium">Open Leo Wallet</span> to
+                          speed up block scanning — payment will retry automatically.
                         </p>
+                        <div className="flex items-center gap-3 pt-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-[10px] uppercase tracking-widest border border-amber-500/20 text-amber-400 hover:bg-amber-500/10"
+                            onClick={() => handlePayRef.current?.()}
+                            disabled={status === "pending"}
+                          >
+                            Retry Now
+                          </Button>
+                          <span className="text-[10px] text-slate-5">or wait — auto-retrying…</span>
+                        </div>
                       </div>
                     )}
 
@@ -499,8 +621,16 @@ export default function PaymentPage() {
                     )}
                   </div>
 
+                  {programDeployed === false && (
+                    <div className="p-4 rounded-2xl bg-red-500/5 border border-red-500/10">
+                      <p className="text-xs text-red-400 font-medium">
+                        ⚠️ Smart contract not found on testnet. Payment will be rejected. Contact the merchant.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="space-y-4">
-                    <Button 
+                    <Button
                       className="w-full py-5 text-xs uppercase tracking-[0.25em]"
                       onClick={handlePay}
                       disabled={status === "pending"}

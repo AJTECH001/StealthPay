@@ -14,7 +14,7 @@ interface AleoWalletProviderProps {
 function createPatchedShieldAdapter(appName: string): ShieldWalletAdapter {
   const adapter = new ShieldWalletAdapter({ 
     appName,
-    programs: ["credits.aleo", "stealthpay_usdcx_v2.aleo", "test_usdcx_stablecoin.aleo"]
+    programs: ["credits.aleo", "stealthpay_usdcx_v3.aleo", "test_usdcx_stablecoin.aleo"]
   });
 
   // The Shield extension validates `network` strictly against its enum values.
@@ -50,8 +50,8 @@ function createPatchedLeoAdapter(appName: string): LeoWalletAdapter {
   const adapter = new LeoWalletAdapter({ 
     appName,
     programIdPermissions: {
-      "testnetbeta": ["credits.aleo", "stealthpay_usdcx_v2.aleo", "test_usdcx_stablecoin.aleo"],
-      "testnet": ["credits.aleo", "stealthpay_usdcx_v2.aleo", "test_usdcx_stablecoin.aleo"]
+      "testnetbeta": ["credits.aleo", "stealthpay_usdcx_v3.aleo", "test_usdcx_stablecoin.aleo"],
+      "testnet": ["credits.aleo", "stealthpay_usdcx_v3.aleo", "test_usdcx_stablecoin.aleo"]
     }
   });
   // Patch requestRecords: newer Leo Wallet versions return a plain array []
@@ -149,7 +149,7 @@ export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
       autoConnect
       programs={[
         "credits.aleo", 
-        "stealthpay_usdcx_v2.aleo", 
+        "stealthpay_usdcx_v3.aleo", 
         "test_usdcx_stablecoin.aleo"
       ]}
     >
