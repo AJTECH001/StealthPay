@@ -67,6 +67,27 @@ function clearLedgerField(addr: string, field: keyof Ledger) {
   saveLedger(addr, l);
 }
 
+// ─── Shield Tx Registry ──────────────────────────────────────────────────────
+// After a successful transfer_public_to_private we store the real tx ID so
+// getRecordFromBlockchain can decrypt the output record directly if the wallet
+// scanner hasn't indexed it yet.
+
+interface ShieldTxEntry { txId: string; program: string; timestamp: number; }
+const SHIELD_TXS_KEY = (addr: string) => `sp-shield-txs-${addr}`;
+
+function getShieldTxs(addr: string): ShieldTxEntry[] {
+  try { return JSON.parse(localStorage.getItem(SHIELD_TXS_KEY(addr)) ?? "[]"); }
+  catch { return []; }
+}
+
+function addShieldTx(addr: string, entry: ShieldTxEntry) {
+  const txs = getShieldTxs(addr);
+  if (!txs.find(t => t.txId === entry.txId)) {
+    txs.unshift(entry);
+    try { localStorage.setItem(SHIELD_TXS_KEY(addr), JSON.stringify(txs.slice(0, 10))); } catch {}
+  }
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type TxStatus = "idle" | "pending" | "success" | "error";
@@ -152,6 +173,58 @@ export function useStealthPay() {
     const m = content.match(/microcredits:\s*(?:"|')?(\d[\d_]*)u\d+/);
     return m ? parseInt(m[1].replace(/_/g, "")) : 0;
   };
+
+  // ─── getRecordFromBlockchain ─────────────────────────────────────────────
+  // Fallback when requestRecords returns empty (wallet scanner hasn't indexed
+  // the record yet). Fetches the record ciphertext from the Aleo node using
+  // the stored shield tx ID, then decrypts it with the wallet's private key.
+
+  const getRecordFromBlockchain = useCallback(
+    async (program: string, requiredMicrocredits = 0): Promise<string | null> => {
+      if (!address) return null;
+      // Use the raw extension object — the 5-arg decrypt signature is on the
+      // underlying Leo Wallet, not on the useWallet wrapper (which only exposes 1 arg).
+      const leoWin = (window as any).leoWallet ?? (window as any).leo;
+      if (!leoWin?.decrypt) return null;
+
+      const txs = getShieldTxs(address).filter(t => t.program === program);
+      for (const { txId } of txs) {
+        if (!txId.startsWith("at1")) continue; // skip fake Shield Wallet IDs
+        try {
+          const res = await fetch(
+            `https://api.explorer.provable.com/v1/testnet/transaction/${txId}`
+          );
+          if (!res.ok) continue;
+          const data = await res.json();
+          const transitions: any[] = data?.execution?.transitions ?? [];
+          for (const t of transitions) {
+            if (t.program !== program) continue;
+            if (t.function !== "transfer_public_to_private") continue;
+            const tpk: string = t.tpk ?? "";
+            const outputs: any[] = t.outputs ?? [];
+            for (let idx = 0; idx < outputs.length; idx++) {
+              const out = outputs[idx];
+              if (out.type !== "record" || !out.value) continue;
+              try {
+                const result = await leoWin.decrypt(
+                  out.value, tpk, program, "transfer_public_to_private", idx
+                );
+                const plaintext: string = result?.text ?? result;
+                if (!plaintext) continue;
+                if (requiredMicrocredits > 0) {
+                  const mc = parseMicrocreditsFromRecord(plaintext);
+                  if (mc < requiredMicrocredits) continue;
+                }
+                return plaintext;
+              } catch { continue; }
+            }
+          }
+        } catch { continue; }
+      }
+      return null;
+    },
+    [address]
+  );
 
   const getFirstRecord = useCallback(
     async (program: string, requiredMicrocredits = 0): Promise<string | null> => {
@@ -246,9 +319,11 @@ export function useStealthPay() {
         }
       }
 
-      return null;
+      // All requestRecords attempts failed — try fetching the record directly
+      // from the Aleo blockchain and decrypting with the wallet's private key.
+      return await getRecordFromBlockchain(program, requiredMicrocredits);
     },
-    [requestRecords]
+    [requestRecords, getRecordFromBlockchain]
   );
 
   // ─── create_invoice ────────────────────────────────────────────────────────
@@ -629,6 +704,11 @@ export function useStealthPay() {
         if (result?.transactionId) {
           setTxId(result.transactionId);
           setStatus("success");
+          // Store tx ID so we can fetch the output record directly from chain
+          // if the wallet scanner hasn't indexed it yet.
+          if (address && result.transactionId.startsWith("at1")) {
+            addShieldTx(address, { txId: result.transactionId, program, timestamp: Date.now() });
+          }
           if (address) {
             const next = adjustLedger(address, isUsdcx ? { usdcx: amount } : { credits: amount });
             if (isUsdcx) {

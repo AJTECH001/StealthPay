@@ -9,6 +9,7 @@ import { api } from "../../services/api";
 import { motion, AnimatePresence } from "framer-motion";
 import { USDCxInfo } from "../components/USDCxInfo";
 import { EXPLORER_BASES, PROGRAM_ID } from "../../utils/aleo-utils";
+import { QRCodeSVG } from "qrcode.react";
 
 // Poll every 5 s for up to 5 minutes (60 polls)
 const POLL_INTERVAL_MS = 5_000;
@@ -322,6 +323,32 @@ export default function CreateInvoice() {
                     ) : null}
                     {badge.text}
                   </div>
+
+                  {/* QR Code Section */}
+                  {confirmStatus !== "rejected" && (
+                    <div className="flex flex-col items-center justify-center p-8 bg-white/[0.03] border border-white/5 rounded-3xl space-y-6">
+                      <div className="p-4 bg-white rounded-2xl shadow-[0_0_50px_rgba(255,255,255,0.1)]">
+                        <QRCodeSVG
+                          value={invoiceResult.paymentUrl}
+                          size={180}
+                          level="H"
+                          includeMargin={false}
+                          imageSettings={{
+                            src: "/aleo.svg",
+                            x: undefined,
+                            y: undefined,
+                            height: 24,
+                            width: 24,
+                            excavate: true,
+                          }}
+                        />
+                      </div>
+                      <div className="text-center space-y-1">
+                        <p className="text-xs font-bold text-white uppercase tracking-widest">Scan to Pay</p>
+                        <p className="text-[10px] text-slate-11">Share this QR code with the payer</p>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Payment link — always visible; hide only on hard rejection */}
                   {confirmStatus !== "rejected" && (
