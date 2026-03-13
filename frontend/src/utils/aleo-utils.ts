@@ -4,7 +4,7 @@
  * field encoding helpers, and on-chain mapping queries.
  */
 
-export const PROGRAM_ID = import.meta.env.VITE_STEALTHPAY_PROGRAM_ID || "stealthpay_usdcx_v3.aleo";
+export const PROGRAM_ID = import.meta.env.VITE_STEALTHPAY_PROGRAM_ID || "stealthpay_usdcx_v4.aleo";
 export const USDCX_PROGRAM_ID = import.meta.env.VITE_USDCX_PROGRAM_ID || "test_usdcx_stablecoin.aleo";
 export const FREEZELIST_PROGRAM_ID = "test_usdcx_freezelist.aleo";
 
@@ -224,7 +224,7 @@ export const generateFreezeListProof = async (
 
 /**
  * Build the [MerkleProof; 2] input string required by pay_invoice_usdcx /
- * pay_donation_usdcx / make_payment_usdcx.
+ * pay_invoice_usdcx / make_payment_usdcx.
  *
  * The contract checks that both the payer and the recipient are NOT on the
  * freeze list. On an empty testnet freeze list, proofs of non-membership at

@@ -7,8 +7,6 @@
  *   create_invoice_usdcx(merchant, amount:u128, salt, memo, expiry_hours:u32, invoice_type:u8)
  *   pay_invoice(record, merchant, amount:u64, salt, payment_secret, message)
  *   pay_invoice_usdcx(record, merchant, amount:u128, salt, payment_secret, message, [proof,proof])
- *   pay_donation(record, merchant, amount:u64, salt, payment_secret, message)
- *   pay_donation_usdcx(record, merchant, amount:u128, salt, payment_secret, message, [proof,proof])
  *   settle_invoice(salt, amount:u64)
  *   make_payment(record, amount:u64, merchant)
  *   make_payment_usdcx(record, amount:u128, merchant, [proof,proof])
@@ -19,6 +17,7 @@ import { useWallet } from "@provablehq/aleo-wallet-adaptor-react";
 import {
   PROGRAM_ID,
   USDCX_PROGRAM_ID,
+  EXPLORER_BASES,
   buildUsdcxProofs,
   stringToField,
 } from "../utils/aleo-utils";
@@ -140,6 +139,50 @@ export function useStealthPay() {
     recordsAccessDenied.current = false;
   }, [address]);
 
+  // ─── Shield ID Resolution Poller ──────────────────────────────────────────
+  // Temp IDs (UUIDs) from the wallet extension are not useful for explorer
+  // lookup. We poll transactionStatus for any temp IDs in our local registry
+  // and update them with their final on-chain at1... IDs.
+  useEffect(() => {
+    if (!address || !transactionStatus) return;
+
+    let timer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+
+    const resolveTxs = async () => {
+      const txs = getShieldTxs(address);
+      let changed = false;
+
+      for (let i = 0; i < txs.length; i++) {
+        if (!txs[i].txId.startsWith("at1")) {
+          try {
+            const res = await transactionStatus(txs[i].txId);
+            if (res?.transactionId?.startsWith("at1")) {
+              txs[i].txId = res.transactionId;
+              changed = true;
+            }
+          } catch { /* ignore poll err */ }
+        }
+      }
+
+      if (changed && !cancelled) {
+        try {
+          localStorage.setItem(SHIELD_TXS_KEY(address), JSON.stringify(txs));
+        } catch {}
+      }
+
+      if (!cancelled) {
+        timer = setTimeout(resolveTxs, 5000);
+      }
+    };
+
+    resolveTxs();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [address, transactionStatus]);
+
   const reset = useCallback(() => {
     setStatus("idle");
     setTxId(null);
@@ -156,23 +199,26 @@ export function useStealthPay() {
    * found without immediately declaring "wallet_syncing".
    */
   // Parse microcredits/amount from any record shape the wallet adapter returns.
-  const parseMicrocreditsFromRecord = (rec: unknown): number => {
+  const parseAmountFromRecord = (rec: unknown, field: "microcredits" | "amount" = "microcredits"): number => {
     const r = rec as Record<string, unknown>;
     // Direct field
-    if (typeof r?.microcredits === "number") return r.microcredits as number;
-    if (typeof r?.microcredits === "string")
-      return parseInt((r.microcredits as string).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
+    if (typeof r?.[field] === "number") return r[field] as number;
+    if (typeof r?.[field] === "string")
+      return parseInt((r[field] as string).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
     // Nested under .data
     if (r?.data) {
-      const v = (r.data as Record<string, unknown>).microcredits;
+      const v = (r.data as Record<string, unknown>)[field];
       if (typeof v === "number") return v;
       if (typeof v === "string") return parseInt(String(v).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
     }
     // Plaintext / JSON string scan
     const content = typeof rec === "string" ? rec : JSON.stringify(rec);
-    const m = content.match(/microcredits:\s*(?:"|')?(\d[\d_]*)u\d+/);
+    const m = content.match(new RegExp(`${field}:\\s*(?:"|')?(\\d[\\d_]*)u\\d+`));
     return m ? parseInt(m[1].replace(/_/g, "")) : 0;
   };
+
+  const parseMicrocreditsFromRecord = (rec: unknown) => parseAmountFromRecord(rec, "microcredits");
+  const parseUsdcxFromRecord = (rec: unknown) => parseAmountFromRecord(rec, "amount");
 
   // ─── getRecordFromBlockchain ─────────────────────────────────────────────
   // Fallback when requestRecords returns empty (wallet scanner hasn't indexed
@@ -182,44 +228,49 @@ export function useStealthPay() {
   const getRecordFromBlockchain = useCallback(
     async (program: string, requiredMicrocredits = 0): Promise<string | null> => {
       if (!address) return null;
-      // Use the raw extension object — the 5-arg decrypt signature is on the
-      // underlying Leo Wallet, not on the useWallet wrapper (which only exposes 1 arg).
       const leoWin = (window as any).leoWallet ?? (window as any).leo;
       if (!leoWin?.decrypt) return null;
 
       const txs = getShieldTxs(address).filter(t => t.program === program);
       for (const { txId } of txs) {
-        if (!txId.startsWith("at1")) continue; // skip fake Shield Wallet IDs
-        try {
-          const res = await fetch(
-            `https://api.explorer.provable.com/v1/testnet/transaction/${txId}`
-          );
-          if (!res.ok) continue;
-          const data = await res.json();
-          const transitions: any[] = data?.execution?.transitions ?? [];
-          for (const t of transitions) {
-            if (t.program !== program) continue;
-            if (t.function !== "transfer_public_to_private") continue;
-            const tpk: string = t.tpk ?? "";
-            const outputs: any[] = t.outputs ?? [];
-            for (let idx = 0; idx < outputs.length; idx++) {
-              const out = outputs[idx];
-              if (out.type !== "record" || !out.value) continue;
-              try {
-                const result = await leoWin.decrypt(
-                  out.value, tpk, program, "transfer_public_to_private", idx
-                );
-                const plaintext: string = result?.text ?? result;
-                if (!plaintext) continue;
-                if (requiredMicrocredits > 0) {
-                  const mc = parseMicrocreditsFromRecord(plaintext);
-                  if (mc < requiredMicrocredits) continue;
-                }
-                return plaintext;
-              } catch { continue; }
+        // Skip temp IDs; the background poller will resolve them soon
+        if (!txId.startsWith("at1")) continue;
+
+        for (const base of EXPLORER_BASES) {
+          try {
+            const url = `${base.replace("v2", "v1")}/transaction/${txId}`;
+            const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+            if (!res.ok) continue;
+            
+            const data = await res.json();
+            const transitions: any[] = data?.execution?.transitions ?? [];
+            for (const t of transitions) {
+              if (t.program !== program) continue;
+              if (t.function !== "transfer_public_to_private") continue;
+              
+              const tpk: string = t.tpk ?? "";
+              const outputs: any[] = t.outputs ?? [];
+              for (let idx = 0; idx < outputs.length; idx++) {
+                const out = outputs[idx];
+                if (out.type !== "record" || !out.value) continue;
+                try {
+                  const result = await leoWin.decrypt(
+                    out.value, tpk, program, "transfer_public_to_private", idx
+                  );
+                  const plaintext: string = result?.text ?? result;
+                  if (!plaintext) continue;
+                  if (requiredMicrocredits > 0) {
+                    const mc = program === USDCX_PROGRAM_ID ? parseUsdcxFromRecord(plaintext) : parseMicrocreditsFromRecord(plaintext);
+                    if (mc < requiredMicrocredits) continue;
+                  }
+                  return plaintext;
+                } catch { continue; }
+              }
             }
-          }
-        } catch { continue; }
+            // If we found the transaction but it didn't have the record, no point checking other bases
+            break; 
+          } catch { continue; }
+        }
       }
       return null;
     },
@@ -292,14 +343,15 @@ export function useStealthPay() {
           // This ensures we never pass an insufficient record to transfer_private,
           // which would cause an on-chain rejection if balance < payment amount.
           const best = records.reduce((prev: unknown, curr: unknown) => {
-            return parseMicrocreditsFromRecord(curr) >= parseMicrocreditsFromRecord(prev)
+            const field = program === USDCX_PROGRAM_ID ? "amount" : "microcredits";
+            return parseAmountFromRecord(curr, field) >= parseAmountFromRecord(prev, field)
               ? curr
               : prev;
           }, records[0]);
 
           // If caller specified a required amount, verify the best record covers it.
           if (requiredMicrocredits > 0) {
-            const bestBalance = parseMicrocreditsFromRecord(best);
+            const bestBalance = program === USDCX_PROGRAM_ID ? parseUsdcxFromRecord(best) : parseMicrocreditsFromRecord(best);
             if (bestBalance < requiredMicrocredits) {
               // Record found but balance is too low — keep retrying; the wallet
               // may not have finished scanning all records yet.
@@ -452,7 +504,6 @@ export function useStealthPay() {
           paymentSecret,
           message = "0field",
           tokenType = 0,
-          isDonation = false,
         } = params;
 
         const isUsdcx = tokenType === 1;
@@ -486,12 +537,7 @@ export function useStealthPay() {
           message,        // public message: field
         ];
 
-        let functionName: string;
-        if (isDonation) {
-          functionName = isUsdcx ? "pay_donation_usdcx" : "pay_donation";
-        } else {
-          functionName = isUsdcx ? "pay_invoice_usdcx" : "pay_invoice";
-        }
+        const functionName = isUsdcx ? "pay_invoice_usdcx" : "pay_invoice";
 
         // USDCx functions require a [MerkleProof; 2] as the last argument
         if (isUsdcx) {
@@ -706,7 +752,7 @@ export function useStealthPay() {
           setStatus("success");
           // Store tx ID so we can fetch the output record directly from chain
           // if the wallet scanner hasn't indexed it yet.
-          if (address && result.transactionId.startsWith("at1")) {
+          if (address) {
             addShieldTx(address, { txId: result.transactionId, program, timestamp: Date.now() });
           }
           if (address) {

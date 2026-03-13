@@ -31,7 +31,7 @@ const encrypt = (text) => {
 };
 
 const decrypt = (text) => {
-    if (!text) return null;
+    if (!text || typeof text !== 'string') return text;
     try {
         const parts = text.split(':');
         if (parts.length !== 3) return text;

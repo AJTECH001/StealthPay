@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { USDCxInfo } from "../components/USDCxInfo";
 import { EXPLORER_BASES, PROGRAM_ID } from "../../utils/aleo-utils";
 import { QRCodeSVG } from "qrcode.react";
+import { isNFCSupported, writeNDEF } from "../../utils/nfc";
 
 // Poll every 5 s for up to 5 minutes (60 polls)
 const POLL_INTERVAL_MS = 5_000;
@@ -64,6 +65,8 @@ export default function CreateInvoice() {
   } | null>(null);
 
   const [confirmStatus, setConfirmStatus] = useState<ConfirmState>("pending");
+  const [nfcStatus, setNfcStatus] = useState<"idle" | "writing" | "success" | "error">("idle");
+  const [nfcError, setNfcError] = useState<string | null>(null);
 
   const pollCount = useRef(0);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -144,6 +147,20 @@ export default function CreateInvoice() {
     pollTimer.current = setTimeout(check, POLL_INTERVAL_MS);
   };
 
+  const handleNFCWrite = async () => {
+    if (!invoiceResult?.paymentUrl) return;
+    setNfcStatus("writing");
+    setNfcError(null);
+    try {
+      await writeNDEF(invoiceResult.paymentUrl);
+      setNfcStatus("success");
+      setTimeout(() => setNfcStatus("idle"), 3000);
+    } catch (err: any) {
+      setNfcStatus("error");
+      setNfcError(err.message || "Failed to write to NFC tag");
+    }
+  };
+
   const handleCreate = async () => {
     const amountNum = parseFloat(amount);
     if (!amount || isNaN(amountNum) || amountNum <= 0) return;
@@ -210,9 +227,16 @@ export default function CreateInvoice() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const explorerUrl = invoiceResult?.txId?.startsWith("at1")
+  const txUrl = invoiceResult?.txId?.startsWith("at1")
     ? getExplorerTxUrl(invoiceResult.txId)
     : null;
+
+  const addressUrl = address ? `https://testnet.explorer.provable.com/address/${address}` : null;
+  
+  // Final explorer URL to show: 
+  // 1. Specific Tx URL if we have the canonical ID
+  // 2. Address URL if confirmed but no canonical ID yet
+  const effectiveExplorerUrl = txUrl || (confirmStatus === "confirmed" ? addressUrl : null);
 
   // ── Status badge configuration ────────────────────────────────────────────
   const statusBadge = () => {
@@ -347,6 +371,30 @@ export default function CreateInvoice() {
                         <p className="text-xs font-bold text-white uppercase tracking-widest">Scan to Pay</p>
                         <p className="text-[10px] text-slate-11">Share this QR code with the payer</p>
                       </div>
+
+                      {isNFCSupported() && (
+                        <div className="pt-4 w-full border-t border-white/5">
+                          <Button 
+                            variant={nfcStatus === "success" ? "secondary" : "ghost"}
+                            className={`w-full text-[10px] uppercase tracking-widest h-10 border transition-all ${
+                              nfcStatus === "writing" ? "border-blue-500 animate-pulse text-blue-400" :
+                              nfcStatus === "success" ? "border-green-500 text-green-400" :
+                              nfcStatus === "error" ? "border-red-500 text-red-400" :
+                              "border-white/10 text-slate-11 hover:bg-white/5"
+                            }`}
+                            onClick={handleNFCWrite}
+                            disabled={nfcStatus === "writing"}
+                          >
+                            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-1.496-3.648a9.964 9.964 0 011.892-12.24M6.74 12.29a9.033 9.033 0 011.643-3.607m3.81 11.421a9.963 9.963 0 01-4.012-3.39m9.033-5.112a9.033 9.033 0 011.539-2.115m-2.68 1.334a9.06 9.06 0 011.141-3.09m3.669 3.669a9.961 9.961 0 011.514 4.14M7.83 4.694a9.966 9.966 0 010 14.612m0 0a9.97 9.97 0 001.525 1.47m3.357-12.067a9.035 9.035 0 011.539 2.118" />
+                            </svg>
+                            {nfcStatus === "writing" ? "Tap NFC Tag to programmed..." : 
+                             nfcStatus === "success" ? "Tag Programmed ✓" : 
+                             nfcStatus === "error" ? "Write Failed" : "Program NFC Sticker"}
+                          </Button>
+                          {nfcError && <p className="mt-2 text-[9px] text-red-400 text-center">{nfcError}</p>}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -363,28 +411,15 @@ export default function CreateInvoice() {
                     </div>
                   )}
 
-                  {/* Explorer link once we have an at1… ID */}
-                  {explorerUrl && (
-                    <a href={explorerUrl} target="_blank" rel="noopener noreferrer" className="block">
+                  {/* Explorer link */}
+                  {effectiveExplorerUrl && (
+                    <a href={effectiveExplorerUrl} target="_blank" rel="noopener noreferrer" className="block">
                       <Button variant="ghost" className="w-full text-[10px] uppercase tracking-widest border border-white/10">
-                        View on Aleo Explorer →
+                        {txUrl ? "View on Aleo Explorer →" : "View My Account on Explorer →"}
                       </Button>
                     </a>
                   )}
 
-                  {/* "No tx ID" fallback explorer suggestion */}
-                  {!invoiceResult.txId && (confirmStatus === "no_response" || confirmStatus === "timeout") && (
-                    <a
-                      href={`https://testnet.explorer.provable.com/address/${address}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block"
-                    >
-                      <Button variant="ghost" className="w-full text-[10px] uppercase tracking-widest border border-white/10">
-                        Check My Transactions on Explorer →
-                      </Button>
-                    </a>
-                  )}
 
                   {/* Multi-pay salt */}
                   {invoiceResult.isMultiPay && (
@@ -472,7 +507,7 @@ export default function CreateInvoice() {
                       <div className="space-y-1">
                         <span className="text-sm font-bold text-white uppercase tracking-wider block">Multi-pay</span>
                         <span className="text-xs text-slate-11 block leading-relaxed">
-                          Allows many senders to pay. Good for donations or subscriptions.
+                          Allows many senders to pay. Good for subscriptions or group buys.
                         </span>
                       </div>
                     </label>

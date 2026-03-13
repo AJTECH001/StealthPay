@@ -3,7 +3,7 @@
  * Wires frontend to stealthpay_usdcx.aleo program via wallet adapter.
  */
 
-export const STEALTHPAY_PROGRAM_ID = import.meta.env.VITE_STEALTHPAY_PROGRAM_ID || "stealthpay_usdcx_v3.aleo";
+export const STEALTHPAY_PROGRAM_ID = import.meta.env.VITE_STEALTHPAY_PROGRAM_ID || "stealthpay_usdcx_v4.aleo";
 export const USDCX_PROGRAM_ID = import.meta.env.VITE_USDCX_PROGRAM_ID || "test_usdcx_stablecoin.aleo";
 
 /** Generate a random field value for salt (used in invoice commitment).
@@ -58,7 +58,7 @@ export type CreateInvoiceParams = {
   salt: string;
   memo?: string;              // Optional memo string (encoded as field on-chain)
   expiryHours?: number;
-  invoiceType?: number; // 0 = Standard, 1 = Multi-pay, 2 = Donation
+  invoiceType?: number; // 0 = Standard, 1 = Multi-pay
   tokenType?: number; // 0 = Credits, 1 = USDCx
 };
 
@@ -69,7 +69,6 @@ export type PayInvoiceParams = {
   paymentSecret: string;
   message?: string;
   tokenType?: number; // 0 = Credits, 1 = USDCx
-  isDonation?: boolean; // true = routes to pay_donation / pay_donation_usdcx
 };
 
 export type SettleInvoiceParams = {

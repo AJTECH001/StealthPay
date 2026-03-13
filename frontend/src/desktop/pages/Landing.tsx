@@ -1,7 +1,9 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { GlassCard } from "../../components/ui/GlassCard";
 import { Button } from "../../components/ui/Button";
 import { motion } from "framer-motion";
+import { useState, useEffect } from "react";
+import { isNFCSupported, readNDEF } from "../../utils/nfc";
 
 const features = [
   {
@@ -39,6 +41,37 @@ const steps = [
 ];
 
 export default function Landing() {
+  const navigate = useNavigate();
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [showNFC, setShowNFC] = useState(false);
+
+  useEffect(() => {
+    setShowNFC(isNFCSupported());
+  }, []);
+
+  const handleNFCScan = async () => {
+    setIsScanning(true);
+    setScanError(null);
+    try {
+      const url = await readNDEF();
+      // Expecting something like http://localhost:5173/pay?merchant=...
+      if (url.includes("/pay?")) {
+        const path = url.split(window.location.origin)[1] || url.split("http://localhost:5173")[1];
+        if (path) {
+          navigate(path);
+        } else {
+          // Fallback if origin doesn't match
+          window.location.href = url;
+        }
+      } else {
+        throw new Error("Invalid StealthPay link on tag.");
+      }
+    } catch (err: any) {
+      setScanError(err.message || "Failed to read tag");
+      setIsScanning(false);
+    }
+  };
   return (
     <div className="relative min-h-[90vh] flex flex-col gap-32 py-12">
       {/* Hero */}
@@ -70,14 +103,33 @@ export default function Landing() {
           transition={{ duration: 0.8, delay: 0.2 }}
           className="flex flex-col md:flex-row flex-wrap gap-4 w-full md:w-auto"
         >
-          <Link to="/explorer" className="w-full md:w-auto">
+          <Link to="/explorer" className="w-full md:w-auto text-nowrap">
             <Button size="lg" className="w-full md:w-auto uppercase tracking-widest text-xs">Launch App</Button>
           </Link>
-          <Link to="/docs" className="w-full md:w-auto">
+          {showNFC && (
+            <Button 
+              variant="outline" 
+              size="lg" 
+              onClick={handleNFCScan}
+              disabled={isScanning}
+              className={`w-full md:w-auto uppercase tracking-widest text-xs border-blue-500/30 text-blue-400 hover:bg-blue-500/5 ${isScanning ? "animate-pulse" : ""}`}
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-1.496-3.648a9.964 9.964 0 011.892-12.24M6.74 12.29a9.033 9.033 0 011.643-3.607m3.81 11.421a9.963 9.963 0 01-4.012-3.39m9.033-5.112a9.033 9.033 0 011.539-2.115m-2.68 1.334a9.06 9.06 0 011.141-3.09m3.669 3.669a9.961 9.961 0 011.514 4.14M7.83 4.694a9.966 9.966 0 010 14.612m0 0a9.97 9.97 0 001.525 1.47m3.357-12.067a9.035 9.035 0 011.539 2.118" />
+              </svg>
+              {isScanning ? "Scanning Tag..." : "Tap to Pay"}
+            </Button>
+          )}
+          <Link to="/docs" className="w-full md:w-auto text-nowrap">
             <Button variant="secondary" size="lg" className="w-full md:w-auto uppercase tracking-widest text-xs">
               Read documentation
             </Button>
           </Link>
+          {scanError && (
+            <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full text-center text-[10px] text-red-400 mt-2">
+              {scanError}
+            </motion.p>
+          )}
         </motion.div>
       </section>
 

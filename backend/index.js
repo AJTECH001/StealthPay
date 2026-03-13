@@ -197,13 +197,18 @@ app.get('/api/invoices/recent', async (req, res) => {
 
 app.get('/api/invoices/by-salt', async (req, res) => {
     const { salt, amount } = req.query;
-    if (!salt || !amount) {
+    console.log(`Fetching invoice by salt: ${salt}, amount: ${amount}`);
+    
+    if (!salt || amount === undefined) {
         return res.status(400).json({ error: 'Missing salt or amount' });
     }
 
     try {
-        // Match by salt; use tolerance for amount (avoids float precision issues)
         const amountNum = parseFloat(amount);
+        if (isNaN(amountNum)) {
+            return res.status(400).json({ error: 'Invalid amount' });
+        }
+
         const result = await pool.query(
             `SELECT * FROM invoices WHERE salt = $1 AND amount BETWEEN $2::numeric - 0.000001 AND $2::numeric + 0.000001 LIMIT 1`,
             [salt, amountNum]
@@ -214,8 +219,12 @@ app.get('/api/invoices/by-salt', async (req, res) => {
             return res.status(404).json({ error: 'Invoice not found' });
         }
 
-        const { payer_address, ...rest } = rows[0];
-        const data = { ...rest, merchant_address: decrypt(rest.merchant_address) };
+        const inv = rows[0];
+        const { payer_address, ...rest } = inv;
+        const data = { 
+            ...rest, 
+            merchant_address: decrypt(inv.merchant_address) 
+        };
 
         res.json(data);
     } catch (error) {

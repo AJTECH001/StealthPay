@@ -1,9 +1,9 @@
 import credits.aleo;
 import test_usdcx_stablecoin.aleo;
 
-program stealthpay_usdcx_v3.aleo {
+program stealthpay_usdcx_v4.aleo {
     // Upgrade authority for program updates on live networks.
-    @admin(address="aleo1eedp9ws4jattrw93nvnlnl7y6uvf0pns5ckzd6rfttfzf28rcy9q06jexz")
+    @admin(address="aleo1gglqej3ple3a7twtpk6f7g69cnhsmlc0vexkfj6hspx90mrd35zsx75m46")
     async constructor() {}
 
     // ─── Data Structures ─────────────────────────────────────────────────────
@@ -11,7 +11,7 @@ program stealthpay_usdcx_v3.aleo {
     struct InvoiceData {
         expiry_height: u32,
         status: u8,       // 0 = Open, 1 = Settled
-        invoice_type: u8, // 0 = Standard (single payment), 1 = Multi-pay (campaign), 2 = Donation
+        invoice_type: u8, // 0 = Standard (single payment), 1 = Multi-pay (campaign)
         token_type: u8,   // 0 = Credits, 1 = USDCx
     }
 
@@ -38,7 +38,7 @@ program stealthpay_usdcx_v3.aleo {
         invoice_hash: field,
         amount: u64,          // Amount (microcredits or USDCx smallest unit)
         token_type: u8,       // 0 = Credits, 1 = USDCx
-        invoice_type: u8,     // 0 = Standard, 1 = Multi Pay, 2 = Donation
+        invoice_type: u8,     // 0 = Standard, 1 = Multi Pay
         salt: field,          // For checking against hash
         memo: field,          // Encoded Memo (max ~31 chars)
     }
@@ -141,164 +141,6 @@ program stealthpay_usdcx_v3.aleo {
         salt_to_invoice.set(salt, invoice_hash);
     }
 
-    // ─── Donation Payments ───────────────────────────────────────────────────
-
-    async transition pay_donation(
-        pay_record: credits.aleo/credits,
-        merchant: address,
-        amount_to_donate: u64,
-        salt: field,
-        private payment_secret: field,
-        public message: field
-    ) -> (credits.aleo/credits, credits.aleo/credits, PayerReceipt, MerchantReceipt, Future) {
-        let (r1, r2): (credits.aleo/credits, credits.aleo/credits) =
-            credits.aleo/transfer_private(pay_record, merchant, amount_to_donate);
-
-        let merchant_field: field = merchant as field;
-
-        // For donation, the invoice was created with amount 0
-        let amount_field: field = 0u64 as field;
-
-        let merchant_hash: field = BHP256::hash_to_field(merchant_field);
-        let amount_hash: field = BHP256::hash_to_field(amount_field);
-        let salt_hash: field = BHP256::hash_to_field(salt);
-
-        let invoice_hash: field = merchant_hash + amount_hash + salt_hash;
-
-        let salt_scalar: scalar = BHP256::hash_to_scalar(salt);
-        let receipt_hash: field = BHP256::commit_to_field(payment_secret, salt_scalar);
-
-        let payer_receipt: PayerReceipt = PayerReceipt {
-            owner: self.caller,
-            merchant: merchant,
-            receipt_hash: receipt_hash,
-            invoice_hash: invoice_hash,
-            amount: amount_to_donate,
-            token_type: 0u8,
-            timestamp: 0u64
-        };
-
-        let merchant_receipt: MerchantReceipt = MerchantReceipt {
-            owner: merchant,
-            receipt_hash: receipt_hash,
-            invoice_hash: invoice_hash,
-            amount: amount_to_donate,
-            token_type: 0u8
-        };
-
-        let f0: Future = finalize_pay_donation(invoice_hash, salt, receipt_hash, amount_to_donate, 0u8);
-        return (r1, r2, payer_receipt, merchant_receipt, f0);
-    }
-
-    async function finalize_pay_donation(
-        invoice_hash: field,
-        salt: field,
-        receipt_key: field,
-        amount: u64,
-        expected_token_type: u8
-    ) {
-        let stored_hash: field = salt_to_invoice.get(salt);
-        assert_eq(invoice_hash, stored_hash);
-
-        let invoice_data: InvoiceData = invoices.get(stored_hash);
-        assert_eq(invoice_data.token_type, expected_token_type);
-
-        // Ensure it is a Donation Invoice (Type 2)
-        assert_eq(invoice_data.invoice_type, 2u8);
-
-        // Enforce Status is Open (0)
-        assert_eq(invoice_data.status, 0u8);
-
-        if invoice_data.expiry_height != 0u32 {
-            assert(block.height <= invoice_data.expiry_height);
-        }
-
-        // Replay protection
-        let exists: bool = payment_receipts.contains(receipt_key);
-        assert(!exists);
-        payment_receipts.set(receipt_key, amount);
-    }
-
-    async transition pay_donation_usdcx(
-        pay_record: test_usdcx_stablecoin.aleo/Token,
-        merchant: address,
-        amount_to_donate: u128,
-        salt: field,
-        private payment_secret: field,
-        public message: field,
-        private proofs: [MerkleProof; 2]
-    ) -> (test_usdcx_stablecoin.aleo/Token, test_usdcx_stablecoin.aleo/Token, test_usdcx_stablecoin.aleo/ComplianceRecord, PayerReceipt, MerchantReceipt, Future) {
-
-        let (compliance_record, transfer_output_1, transfer_output_2, transfer_future): (test_usdcx_stablecoin.aleo/ComplianceRecord, test_usdcx_stablecoin.aleo/Token, test_usdcx_stablecoin.aleo/Token, Future) =
-            test_usdcx_stablecoin.aleo/transfer_private(merchant, amount_to_donate, pay_record, proofs);
-
-        let merchant_field: field = merchant as field;
-
-        // For donation, the invoice was created with amount 0 (u128)
-        let amount_field: field = 0u128 as field;
-
-        let merchant_hash: field = BHP256::hash_to_field(merchant_field);
-        let amount_hash: field = BHP256::hash_to_field(amount_field);
-        let salt_hash: field = BHP256::hash_to_field(salt);
-
-        let invoice_hash: field = merchant_hash + amount_hash + salt_hash;
-
-        let salt_scalar: scalar = BHP256::hash_to_scalar(salt);
-        let receipt_hash: field = BHP256::commit_to_field(payment_secret, salt_scalar);
-
-        let payer_receipt: PayerReceipt = PayerReceipt {
-            owner: self.caller,
-            merchant: merchant,
-            receipt_hash: receipt_hash,
-            invoice_hash: invoice_hash,
-            amount: amount_to_donate as u64,
-            token_type: 1u8,
-            timestamp: 0u64
-        };
-
-        let merchant_receipt: MerchantReceipt = MerchantReceipt {
-            owner: merchant,
-            receipt_hash: receipt_hash,
-            invoice_hash: invoice_hash,
-            amount: amount_to_donate as u64,
-            token_type: 1u8
-        };
-
-        let f0: Future = finalize_pay_donation_usdcx(invoice_hash, salt, receipt_hash, amount_to_donate as u64, 1u8, transfer_future);
-
-        return (transfer_output_1, transfer_output_2, compliance_record, payer_receipt, merchant_receipt, f0);
-    }
-
-    async function finalize_pay_donation_usdcx(
-        invoice_hash: field,
-        salt: field,
-        receipt_key: field,
-        amount: u64,
-        expected_token_type: u8,
-        f0: Future
-    ) {
-        f0.await();
-        let stored_hash: field = salt_to_invoice.get(salt);
-        assert_eq(invoice_hash, stored_hash);
-
-        let invoice_data: InvoiceData = invoices.get(stored_hash);
-        assert_eq(invoice_data.token_type, expected_token_type);
-
-        // Ensure it is a Donation Invoice (Type 2)
-        assert_eq(invoice_data.invoice_type, 2u8);
-
-        // Enforce Status is Open (0)
-        assert_eq(invoice_data.status, 0u8);
-
-        if invoice_data.expiry_height != 0u32 {
-            assert(block.height <= invoice_data.expiry_height);
-        }
-
-        // Replay protection
-        let exists: bool = payment_receipts.contains(receipt_key);
-        assert(!exists);
-        payment_receipts.set(receipt_key, amount);
-    }
 
     // ─── Invoice Payments ────────────────────────────────────────────────────
 
@@ -477,7 +319,7 @@ program stealthpay_usdcx_v3.aleo {
 
     // ─── Settlement ──────────────────────────────────────────────────────────
 
-    // Closes a multi-pay or donation invoice. Caller must match the invoice merchant.
+    // Closes a multi-pay invoice. Caller must match the invoice merchant.
     async transition settle_invoice(
         public salt: field,
         private amount: u64
