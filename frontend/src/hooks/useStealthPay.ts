@@ -463,9 +463,10 @@ export function useStealthPay() {
         }
 
         if (result?.transactionId) {
-          setTxId(result.transactionId);
+          const txidClean = Array.isArray(result.transactionId) ? result.transactionId[0] : result.transactionId;
+          setTxId(txidClean);
           setStatus("success");
-          return { transactionId: result.transactionId, paymentUrl };
+          return { transactionId: txidClean, paymentUrl };
         }
 
         setError("Transaction failed");
@@ -527,6 +528,8 @@ export function useStealthPay() {
           ? `${BigInt(amountMicrocredits)}u128`
           : `${amountMicrocredits}u64`;
 
+        const functionName = isUsdcx ? "pay_invoice_usdcx" : "pay_invoice";
+
         // Build inputs matching the exact contract parameter order
         const inputs: string[] = [
           recordStr,      // pay_record: credits/Token
@@ -536,8 +539,6 @@ export function useStealthPay() {
           paymentSecret,  // private payment_secret: field
           message,        // public message: field
         ];
-
-        const functionName = isUsdcx ? "pay_invoice_usdcx" : "pay_invoice";
 
         // USDCx functions require a [MerkleProof; 2] as the last argument
         if (isUsdcx) {
@@ -554,11 +555,11 @@ export function useStealthPay() {
         });
 
         if (result?.transactionId) {
-          setTxId(result.transactionId);
+          const txidClean = Array.isArray(result.transactionId) ? result.transactionId[0] : result.transactionId;
+          setTxId(txidClean);
           setStatus("success");
 
-          // Deduct from the optimistic ledger so the dashboard immediately
-          // reflects the reduced balance while the wallet scans the change record.
+          // Deduct from the optimistic ledger
           if (address) {
             const amountCreditsSpent = amountMicrocredits / 1_000_000;
             const next = adjustLedger(
@@ -569,7 +570,7 @@ export function useStealthPay() {
             else setPrivateBalance(Math.max(0, next.credits));
           }
 
-          return { transactionId: result.transactionId };
+          return { transactionId: txidClean };
         }
 
         setError("Transaction failed");

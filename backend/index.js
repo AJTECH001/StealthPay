@@ -385,11 +385,17 @@ app.patch('/api/invoices/:hash', async (req, res) => {
             values.push(encrypt(payer_address));
         }
         if (payment_tx_ids) {
-            const currentIds = Array.isArray(current.payment_tx_ids)
-                ? current.payment_tx_ids
-                : (typeof current.payment_tx_ids === 'string'
-                    ? (current.payment_tx_ids ? JSON.parse(current.payment_tx_ids) : [])
-                    : []);
+            let currentIds = [];
+            if (current.payment_tx_ids) {
+                try {
+                    currentIds = typeof current.payment_tx_ids === 'string' 
+                        ? JSON.parse(current.payment_tx_ids) 
+                        : (Array.isArray(current.payment_tx_ids) ? current.payment_tx_ids : []);
+                } catch (e) {
+                    currentIds = [current.payment_tx_ids];
+                }
+            }
+            if (!Array.isArray(currentIds)) currentIds = [currentIds];
             const newIds = currentIds.includes(payment_tx_ids) ? currentIds : [...currentIds, payment_tx_ids];
             setClauses.push(`payment_tx_ids = $${paramIndex++}`);
             values.push(JSON.stringify(newIds));

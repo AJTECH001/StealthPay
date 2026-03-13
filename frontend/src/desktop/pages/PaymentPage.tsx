@@ -153,7 +153,18 @@ export default function PaymentPage() {
           if (invoice.status === "SETTLED") {
             setIsAlreadyPaid(true);
             if (invoice.payment_tx_ids && !paymentResult) {
-              setPaymentResult({ transactionId: Array.isArray(invoice.payment_tx_ids) ? invoice.payment_tx_ids[0] : invoice.payment_tx_ids });
+              let txid: string;
+              if (Array.isArray(invoice.payment_tx_ids)) {
+                txid = invoice.payment_tx_ids[0];
+              } else if (typeof invoice.payment_tx_ids === 'string' && invoice.payment_tx_ids.startsWith('[')) {
+                try {
+                  const parsed = JSON.parse(invoice.payment_tx_ids);
+                  txid = Array.isArray(parsed) ? parsed[0] : invoice.payment_tx_ids;
+                } catch { txid = invoice.payment_tx_ids; }
+              } else {
+                txid = invoice.payment_tx_ids;
+              }
+              setPaymentResult({ transactionId: txid });
             }
           }
           setLoadingInvoice(false);
@@ -234,8 +245,18 @@ export default function PaymentPage() {
 
     const poll = async () => {
       try {
-        console.log("Polling for final tx hash for request:", paymentResult.transactionId);
-        const res = await transactionStatus?.(paymentResult.transactionId);
+        const currentId = paymentResult.transactionId;
+        // Clean ID for polling: if it's accidentally a JSON string of an array, parse it
+        let cleanId = currentId;
+        if (typeof currentId === 'string' && currentId.startsWith('[')) {
+           try {
+             const parsed = JSON.parse(currentId);
+             cleanId = Array.isArray(parsed) ? parsed[0] : currentId;
+           } catch {}
+        }
+
+        console.log("Polling for final tx hash for request:", cleanId);
+        const res = await transactionStatus?.(cleanId);
         
         if (res && res.transactionId && res.transactionId !== paymentResult.transactionId && res.transactionId.startsWith("at1")) {
           console.log("Observed final tx hash:", res.transactionId);
