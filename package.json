@@ -1,8 +1,0 @@
-{
-  "name": "stealthpay-root",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "build": "npm install --prefix frontend && npm run build --prefix frontend && rm -rf dist && cp -r frontend/dist ./dist"
-  }
-}
