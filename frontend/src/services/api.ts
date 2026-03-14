@@ -5,9 +5,9 @@
  * Override with VITE_API_URL env var if needed.
  */
 
-const API_BASE =
-  import.meta.env.VITE_API_URL ||
-  (import.meta.env.PROD ? "https://stealthpay.onrender.com" : "");
+// Dev: Vite proxies /api → localhost:3000 (vite.config.ts).
+// Prod: Vercel Functions handle /api/* on the same domain.
+const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
 const FETCH_TIMEOUT_MS = 15_000;
 
