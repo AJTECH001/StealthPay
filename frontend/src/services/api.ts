@@ -1,26 +1,34 @@
 /**
  * Backend API client for StealthPay.
- * Uses VITE_API_URL or, in production, the deployed Render backend.
+ * Dev: Vite proxies /api → localhost:3000 (vite.config.ts).
+ * Prod: Vercel proxies /api → Render backend (vercel.json).
+ * Override with VITE_API_URL env var if needed.
  */
 
-// Dev: Vite proxies /api to localhost. Prod: VITE_API_URL or default Render URL.
-const API_BASE =
-  import.meta.env.VITE_API_URL ||
-  (import.meta.env.PROD ? "https://stealthpay.onrender.com" : "");
+const API_BASE = import.meta.env.VITE_API_URL ?? "";
+
+const FETCH_TIMEOUT_MS = 15_000;
 
 async function fetchApi(
   path: string,
   options: RequestInit = {}
 ): Promise<Response> {
   const url = `${API_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-  return res;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export type Invoice = {
