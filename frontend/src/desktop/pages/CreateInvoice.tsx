@@ -9,7 +9,8 @@ import { api } from "../../services/api";
 import { motion, AnimatePresence } from "framer-motion";
 import { USDCxInfo } from "../components/USDCxInfo";
 import { EXPLORER_BASES, PROGRAM_ID } from "../../utils/aleo-utils";
-import { QRCodeSVG } from "qrcode.react";
+import { InvoiceCard } from "../../components/invoice/InvoiceCard";
+import { type Invoice } from "../../services/api";
 
 // Poll every 5 s for up to 5 minutes (60 polls)
 const POLL_INTERVAL_MS = 5_000;
@@ -31,7 +32,6 @@ export default function CreateInvoice() {
   const [memo, setMemo] = useState("");
   const [isMultiPay, setIsMultiPay] = useState(false);
   const [tokenType, setTokenType] = useState(0);
-  const [copied, setCopied] = useState(false);
 
   // Program deployment check — run once on mount
   const [programStatus, setProgramStatus] = useState<"checking" | "ok" | "not_found" | "unknown">("checking");
@@ -152,7 +152,6 @@ export default function CreateInvoice() {
     reset();
     setInvoiceResult(null);
     setConfirmStatus("pending");
-    setCopied(false);
     if (pollTimer.current) clearTimeout(pollTimer.current);
 
     const salt = generateSalt();
@@ -204,12 +203,6 @@ export default function CreateInvoice() {
     }
   };
 
-  const copyLink = () => {
-    if (!invoiceResult?.paymentUrl) return;
-    navigator.clipboard.writeText(invoiceResult.paymentUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   const txUrl = invoiceResult?.txId?.startsWith("at1")
     ? getExplorerTxUrl(invoiceResult.txId)
@@ -322,89 +315,29 @@ export default function CreateInvoice() {
                 <motion.div key="result" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.97 }} className="space-y-6"
                 >
-                  {/* Confirmation status badge */}
-                  <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border text-xs font-medium ${badge.cls}`}>
+                  {/* Transition Status Badge from NullPay approach */}
+                  <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border text-[11px] font-bold uppercase tracking-wider ${badge.cls}`}>
                     {badge.spin ? (
-                      <span className="w-3 h-3 rounded-full border border-white/20 border-t-white/60 animate-spin shrink-0" />
+                      <span className="w-2.5 h-2.5 rounded-full border border-white/20 border-t-white/60 animate-spin shrink-0" />
                     ) : badge.dot ? (
                       <span className={`w-1.5 h-1.5 rounded-full ${badge.dot} shrink-0`} />
                     ) : null}
                     {badge.text}
                   </div>
 
-                  {/* QR Code Section */}
-                  {confirmStatus !== "rejected" && (
-                    <div className="flex flex-col items-center justify-center p-8 bg-white/[0.03] border border-white/5 rounded-3xl space-y-6">
-                      <div className="p-4 bg-white rounded-2xl shadow-[0_0_50px_rgba(255,255,255,0.1)]">
-                        <QRCodeSVG
-                          value={invoiceResult.paymentUrl}
-                          size={180}
-                          level="H"
-                          includeMargin={false}
-                          imageSettings={{
-                            src: "/aleo.svg",
-                            x: undefined,
-                            y: undefined,
-                            height: 24,
-                            width: 24,
-                            excavate: true,
-                          }}
-                        />
-                      </div>
-                      <div className="text-center space-y-1">
-                        <p className="text-xs font-bold text-white uppercase tracking-widest">Scan to Pay</p>
-                        <p className="text-[10px] text-slate-11">Share this QR code with the payer</p>
-                      </div>
-
-                    </div>
-                  )}
-
-                  {/* Payment link — always visible; hide only on hard rejection */}
-                  {confirmStatus !== "rejected" && (
-                    <div className="p-6 rounded-2xl bg-white/[0.03] border border-white/5 space-y-4">
-                      <div className="space-y-1">
-                        <span className="text-[10px] text-slate-5 font-bold uppercase tracking-[0.2em]">Payment Link</span>
-                        <p className="text-sm font-mono text-white break-all leading-relaxed">{invoiceResult.paymentUrl}</p>
-                      </div>
-                      <Button variant="secondary" onClick={copyLink} className="w-full text-xs uppercase tracking-widest">
-                        {copied ? "Copied ✓" : "Copy Link"}
-                      </Button>
-                    </div>
-                  )}
-
-                  {/* Explorer link */}
-                  {effectiveExplorerUrl && (
-                    <a href={effectiveExplorerUrl} target="_blank" rel="noopener noreferrer" className="block">
-                      <Button variant="ghost" className="w-full text-[10px] uppercase tracking-widest border border-white/10">
-                        {txUrl ? "View on Aleo Explorer →" : "View My Account on Explorer →"}
-                      </Button>
-                    </a>
-                  )}
-
-
-                  {/* Multi-pay salt */}
-                  {invoiceResult.isMultiPay && (
-                    <div className="p-6 rounded-2xl bg-amber-500/5 border border-amber-500/10 space-y-3">
-                      <div className="text-xs font-bold text-amber-400 uppercase tracking-widest">Save Your Salt</div>
-                      <p className="text-xs text-slate-11">
-                        Multi-pay invoices need the salt to settle. Keep it safe.
-                      </p>
-                      <div className="flex gap-2">
-                        <code className="flex-1 p-2 bg-black/40 rounded border border-white/5 text-[10px] text-white/60 font-mono break-all">
-                          {invoiceResult.salt}
-                        </code>
-                        <Button variant="ghost" size="sm"
-                          onClick={() => navigator.clipboard.writeText(invoiceResult.salt)}
-                          className="text-[10px] uppercase font-bold shrink-0"
-                        >
-                          Copy
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
-                  <Button variant="outline" className="w-full uppercase tracking-widest text-xs"
-                    onClick={() => {
+                  <InvoiceCard 
+                    invoice={{
+                      invoice_hash: invoiceResult.txId || invoiceResult.salt,
+                      amount: invoiceResult.amount,
+                      merchant_address: address!,
+                      token_type: invoiceResult.tokenType,
+                      salt: invoiceResult.salt,
+                      status: confirmStatus === "confirmed" ? "SETTLED" : "PENDING",
+                      invoice_type: invoiceResult.isMultiPay ? 1 : 0,
+                      created_at: new Date().toISOString(),
+                      updated_at: new Date().toISOString()
+                    } as Invoice}
+                    onReset={() => {
                       setInvoiceResult(null);
                       setAmount("");
                       setMemo("");
@@ -412,9 +345,15 @@ export default function CreateInvoice() {
                       if (pollTimer.current) clearTimeout(pollTimer.current);
                       reset();
                     }}
-                  >
-                    Create Another Invoice
-                  </Button>
+                  />
+
+                  {effectiveExplorerUrl && (
+                    <a href={effectiveExplorerUrl} target="_blank" rel="noopener noreferrer" className="block">
+                      <Button variant="ghost" className="w-full text-[10px] uppercase tracking-widest border border-white/10 h-10">
+                        {txUrl ? "View on Aleo Explorer →" : "View My Account on Explorer →"}
+                      </Button>
+                    </a>
+                  )}
                 </motion.div>
 
               /* Form */

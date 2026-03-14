@@ -1,63 +1,72 @@
+import React from 'react';
+
 interface StatusBadgeProps {
-  status: "PENDING" | "SETTLED" | "EXPIRED";
+    status: string;
 }
 
-export default function StatusBadge({ status }: StatusBadgeProps) {
-  const styles = {
-    PENDING: {
-      background: "rgba(0, 0, 0, 0.06)",
-      border: "1px solid rgba(0, 0, 0, 0.15)",
-      color: "#525252",
-      boxShadow: "none",
-    },
-    SETTLED: {
-      background: "#000000",
-      border: "1px solid #000000",
-      color: "#ffffff",
-      boxShadow: "0 0 15px rgba(0, 0, 0, 0.2)",
-    },
-    EXPIRED: {
-      background: "transparent",
-      border: "1px solid rgba(0, 0, 0, 0.1)",
-      color: "#737373",
-      textDecoration: "line-through",
-    },
-  };
-  const dotStyles = {
-    PENDING: { background: "#737373" },
-    SETTLED: { background: "#ffffff" },
-    EXPIRED: { background: "#737373" },
-  };
+const StatusBadge = ({ status }: StatusBadgeProps) => {
+    // Premium Monochrome Styles adapted for StealthPay
+    const styles: Record<string, React.CSSProperties> = {
+        PENDING: {
+            background: 'rgba(255, 255, 255, 0.05)',
+            border: '1px solid rgba(255, 255, 255, 0.2)',
+            color: '#ccc',
+            boxShadow: 'none'
+        },
+        SETTLED: {
+            background: '#ffffff',
+            border: '1px solid #ffffff',
+            color: '#000000',
+            boxShadow: '0 0 15px rgba(255, 255, 255, 0.4)'
+        },
+        EXPIRED: {
+            background: 'transparent',
+            border: '1px solid rgba(255, 255, 255, 0.05)',
+            color: '#555',
+            textDecoration: 'line-through'
+        },
+    };
 
-  const currentStyle = styles[status];
-  const currentDotStyle = dotStyles[status];
+    const dotStyles: Record<string, React.CSSProperties> = {
+        PENDING: {
+            background: '#ccc',
+            boxShadow: '0 0 5px rgba(200, 200, 200, 0.5)'
+        },
+        SETTLED: {
+            background: '#000',
+        },
+        EXPIRED: {
+            background: '#555',
+        },
+    };
 
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "8px",
-        padding: "4px 12px",
-        borderRadius: "99px",
-        fontSize: "11px",
-        fontWeight: "600",
-        textTransform: "uppercase",
-        letterSpacing: "0.5px",
-        backdropFilter: "blur(10px)",
-        transition: "all 0.3s ease",
-        ...currentStyle,
-      }}
-    >
-      <span
-        style={{
-          width: "6px",
-          height: "6px",
-          borderRadius: "50%",
-          ...currentDotStyle,
-        }}
-      />
-      <span>{status}</span>
-    </span>
-  );
-}
+    const currentStyle = styles[status] || styles.PENDING;
+    const currentDotStyle = dotStyles[status] || dotStyles.PENDING;
+
+    return (
+        <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '4px 12px',
+            borderRadius: '99px',
+            fontSize: '11px',
+            fontWeight: '600',
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px',
+            backdropFilter: 'blur(10px)',
+            transition: 'all 0.3s ease',
+            ...currentStyle
+        }}>
+            <span style={{
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                ...currentDotStyle
+            }}></span>
+            <span>{status}</span>
+        </span>
+    );
+};
+
+export default StatusBadge;

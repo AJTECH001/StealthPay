@@ -7,8 +7,8 @@ import { useWallet } from "@provablehq/aleo-wallet-adaptor-react";
 import { useStealthPay } from "../../hooks/useStealthPay";
 import { api, type InvoiceStats, type Invoice } from "../../services/api";
 import { motion, AnimatePresence } from "framer-motion";
-import { QRCodeSVG } from "qrcode.react";
-import { buildPaymentUrl } from "../../services/stealthpay";
+import { InvoiceTable } from "../../components/profile/InvoiceTable";
+import { StatsCards } from "../../components/profile/StatsCards";
 
 export default function Explorer() {
   const { address } = useWallet();
@@ -47,8 +47,9 @@ export default function Explorer() {
 
   const lastSettledCountRef = useRef<number | null>(null);
   const [notification, setNotification] = useState<{ message: string; type: "success" | "info" } | null>(null);
-  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
-  const [qrInvoice, setQrInvoice] = useState<Invoice | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -517,141 +518,24 @@ export default function Explorer() {
           )}
         </AnimatePresence>
 
-        {/* QR Code Modal */}
-        <AnimatePresence>
-          {isQrModalOpen && qrInvoice && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setIsQrModalOpen(false)}
-                className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-              />
-              <motion.div
-                initial={{ scale: 0.9, opacity: 0, y: 20 }}
-                animate={{ scale: 1, opacity: 1, y: 0 }}
-                exit={{ scale: 0.9, opacity: 0, y: 20 }}
-                className="relative w-full max-w-md overflow-hidden"
-              >
-                <GlassCard className="p-8 space-y-8 border-white/10 shadow-2xl text-center">
-                  <div className="space-y-2">
-                    <h2 className="text-2xl font-bold text-white tracking-tight italic font-serif">Invoice QR Code</h2>
-                    <p className="text-slate-11 text-xs">Share this code with the payer to receive private funds.</p>
-                  </div>
 
-                  <div className="flex justify-center">
-                    <div className="p-4 bg-white rounded-2xl shadow-[0_0_50px_rgba(255,255,255,0.1)]">
-                      <QRCodeSVG
-                        value={buildPaymentUrl(
-                          window.location.origin,
-                          qrInvoice.merchant_address,
-                          String(qrInvoice.amount),
-                          qrInvoice.salt || qrInvoice.invoice_hash,
-                          qrInvoice.token_type
-                        )}
-                        size={200}
-                        level="H"
-                        includeMargin={false}
-                        imageSettings={{
-                          src: "/aleo.svg",
-                          x: undefined,
-                          y: undefined,
-                          height: 28,
-                          width: 28,
-                          excavate: true,
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="p-4 rounded-xl bg-white/[0.03] border border-white/5 space-y-2">
-                       <span className="text-[10px] text-slate-5 font-bold uppercase tracking-[0.2em] block">Order Detail</span>
-                       <div className="text-lg font-serif italic text-white">
-                         {qrInvoice.amount} {qrInvoice.token_type === 1 ? 'USDCx' : 'Credits'}
-                       </div>
-                    </div>
-                    
-                    <Button 
-                      variant="secondary" 
-                      onClick={() => {
-                        const url = buildPaymentUrl(
-                          window.location.origin,
-                          qrInvoice.merchant_address,
-                          String(qrInvoice.amount),
-                          qrInvoice.salt || qrInvoice.invoice_hash,
-                          qrInvoice.token_type
-                        );
-                        navigator.clipboard.writeText(url);
-                        setNotification({ message: "Link copied to clipboard", type: "info" });
-                        setTimeout(() => setNotification(null), 3000);
-                      }}
-                      className="w-full text-xs uppercase tracking-widest"
-                    >
-                      Copy Payment Link
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      onClick={() => setIsQrModalOpen(false)}
-                      className="w-full text-xs uppercase tracking-widest text-slate-11"
-                    >
-                      Close
-                    </Button>
-                  </div>
-                </GlassCard>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-
-        <section className="grid gap-8 grid-cols-1 md:grid-cols-3">
-          <AnimatePresence>
-            {stats && (
-              <>
-                {[
-                  { label: "Total Invoices", value: stats.total },
-                  { label: "Settled", value: stats.settled },
-                  { label: "Active Merchants", value: stats.merchants },
-                ].map((stat, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ scale: 0.95, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ delay: 0.3 + i * 0.1 }}
-                    className="p-6 md:p-8 rounded-3xl bg-[#0a0a0a] border border-white/5 flex flex-col items-center text-center"
-                  >
-                    <span className="text-xs uppercase tracking-[0.2em] text-slate-5 font-bold mb-2">
-                      {stat.label}
-                    </span>
-                    <span className="text-4xl font-serif italic text-white">
-                      {stat.value}
-                    </span>
-                  </motion.div>
-                ))}
-              </>
-            )}
-          </AnimatePresence>
-        </section>
-
-        <div className="grid gap-8 lg:grid-cols-2">
-          {/* Direct Pay Section */}
-          <motion.div
-            initial={{ x: -20, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            transition={{ delay: 0.6 }}
+        {/* Direct Pay Section */}
+        {address && (
+          <motion.section
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: 0.4 }}
+            className="space-y-6"
           >
-            <GlassCard className="h-full p-6 md:p-10 flex flex-col gap-8">
-              <div className="space-y-2">
-                <h2 className="text-2xl font-bold text-white tracking-tight">Direct Payment</h2>
-                <p className="text-slate-11 text-sm">Send private funds directly to a merchant address.</p>
+            <div className="flex justify-between items-end px-2">
+              <div className="space-y-1">
+                <h2 className="text-sm font-bold text-white uppercase tracking-widest">Direct Payment</h2>
+                <p className="text-xs text-slate-11">Send private funds directly to a merchant address.</p>
               </div>
-
-              {!address ? (
-                 <div className="flex-1 flex flex-col items-center justify-center p-8 border border-dashed border-white/10 rounded-2xl">
-                    <p className="text-slate-11 text-sm mb-4">Connect wallet to send payments</p>
-                 </div>
-              ) : (
+            </div>
+            
+            <GlassCard className="p-6 md:p-10">
+              <div className="grid gap-8 lg:grid-cols-2">
                 <div className="space-y-6">
                   {/* Token Selector */}
                   <div className="flex gap-2 p-1 bg-white/5 rounded-lg w-full">
@@ -669,40 +553,42 @@ export default function Explorer() {
                     </button>
                   </div>
 
-                  <Input
-                    label="Merchant address"
-                    value={directMerchant}
-                    onChange={(e) => {
-                      setDirectMerchant(e.target.value);
-                      setDirectResult(null);
-                    }}
-                    placeholder="aleo1..."
-                  />
-                  <Input
-                    label={`Amount (${directTokenType === 1 ? 'USDCx' : 'credits'})`}
-                    type="number"
-                    placeholder="0.00"
-                    value={directAmount}
-                    onChange={(e) => {
-                      setDirectAmount(e.target.value);
-                      setDirectResult(null);
-                    }}
-                    min="0"
-                    step="0.000001"
-                  />
-                  
-                  <div className="pt-2">
-                    <Button
-                      onClick={() => handleDirectPay(directTokenType)}
-                      disabled={status === "pending" || !directMerchant || !directAmount}
-                      className="w-full"
-                    >
-                      {status === "pending" ? "Executing..." : "Send Payment"}
-                    </Button>
+                  <div className="grid gap-6 md:grid-cols-2">
+                    <Input
+                      label="Merchant address"
+                      value={directMerchant}
+                      onChange={(e) => {
+                        setDirectMerchant(e.target.value);
+                        setDirectResult(null);
+                      }}
+                      placeholder="aleo1..."
+                    />
+                    <Input
+                      label={`Amount (${directTokenType === 1 ? 'USDCx' : 'credits'})`}
+                      type="number"
+                      placeholder="0.00"
+                      value={directAmount}
+                      onChange={(e) => {
+                        setDirectAmount(e.target.value);
+                        setDirectResult(null);
+                      }}
+                      min="0"
+                      step="0.000001"
+                    />
                   </div>
+                  
+                  <Button
+                    onClick={() => handleDirectPay(directTokenType)}
+                    disabled={status === "pending" || !directMerchant || !directAmount}
+                    className="w-full md:w-auto md:px-12"
+                  >
+                    {status === "pending" ? "Executing..." : "Send Payment"}
+                  </Button>
+                </div>
 
+                <div className="flex flex-col justify-center">
                   {error === "wallet_syncing" ? (
-                    <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 mt-4 space-y-2">
+                    <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-2">
                       <div className="flex items-center gap-2">
                         <div className="w-3 h-3 rounded-full border-2 border-amber-500/40 border-t-amber-500 animate-spin shrink-0" />
                         <p className="text-xs text-amber-400 font-bold">Shielded Balance Syncing</p>
@@ -712,7 +598,7 @@ export default function Explorer() {
                       </p>
                     </div>
                   ) : error ? (
-                    <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 mt-4">
+                    <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20">
                       <p className="text-xs text-red-400">{error}</p>
                       {error.includes("shield credits first") && (
                         <Button
@@ -729,9 +615,8 @@ export default function Explorer() {
                         </Button>
                       )}
                     </div>
-                  ) : null}
-                  {directResult && (
-                    <div className="p-4 rounded-xl bg-white/5 border border-white/10 mt-4 overflow-hidden">
+                  ) : directResult ? (
+                    <div className="p-4 rounded-xl bg-white/5 border border-white/10 overflow-hidden">
                       <p className="text-xs text-slate-11 mb-1">Success. Transaction Status:</p>
                       {!directResult.startsWith("at1") && !directResult.includes("Completed") ? (
                         <p className="text-[10px] text-amber-500 font-bold uppercase tracking-widest animate-pulse">Finalizing on Aleo Ledger...</p>
@@ -741,107 +626,88 @@ export default function Explorer() {
                         </p>
                       )}
                     </div>
+                  ) : (
+                    <div className="p-6 border border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center text-center space-y-2">
+                      <p className="text-xs text-slate-11">Payment status and transaction hash will appear here.</p>
+                    </div>
                   )}
                 </div>
-              )}
-            </GlassCard>
-          </motion.div>
-
-          {/* Activity Section */}
-          <motion.div
-            initial={{ x: 20, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            transition={{ delay: 0.6 }}
-          >
-            <GlassCard className="h-full p-6 md:p-10 flex flex-col gap-8">
-              <div className="flex justify-between items-end">
-                <div className="space-y-2">
-                  <h2 className="text-2xl font-bold text-white tracking-tight">
-                    {address ? "My Transactions" : "Recent Activity"}
-                  </h2>
-                  <p className="text-slate-11 text-sm">
-                    {address ? "Your invoices and payments on the network." : "Latest transactions across the network."}
-                  </p>
-                </div>
               </div>
+            </GlassCard>
+          </motion.section>
+        )}
 
-              <div className="flex-1 space-y-3">
-                {recentInvoices.length > 0 ? (
-                  recentInvoices.slice(0, 6).map((inv, i) => {
-                    const isMerchant = address && inv.merchant_address === address;
-                    const tokenLabel = inv.invoice_type === 1 ? "USDCx" : "Credits";
-                    const isSettled = inv.status === "SETTLED";
-                    return (
-                      <motion.div
-                        key={inv.invoice_hash}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 0.8 + i * 0.05 }}
-                        className="flex justify-between items-center p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-colors"
-                      >
-                        <div className="flex items-center gap-3">
-                          {address && (
-                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${isMerchant ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"}`}>
-                              {isMerchant ? "↓" : "↑"}
-                            </div>
-                          )}
-                          <div className="space-y-0.5">
-                            <div className="text-xs font-mono text-slate-11">
-                              INV-{inv.invoice_hash.slice(0, 8).toUpperCase()}
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              {address && (
-                                <span className={`text-[9px] font-bold uppercase tracking-widest ${isMerchant ? "text-green-500" : "text-red-400"}`}>
-                                  {isMerchant ? "Incoming" : "Outgoing"}
-                                </span>
-                              )}
-                              <span className={`text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${isSettled ? "bg-green-500/10 text-green-400" : "bg-amber-500/10 text-amber-400"}`}>
-                                {inv.status}
-                              </span>
-                              {isMerchant && !isSettled && (
-                                <button
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    setQrInvoice(inv);
-                                    setIsQrModalOpen(true);
-                                  }}
-                                  className="p-1 px-1.5 rounded bg-white/5 border border-white/10 hover:bg-white/10 transition-colors text-[9px] font-bold text-white uppercase tracking-tighter"
-                                  title="Show Payment QR"
-                                >
-                                  QR
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-right space-y-0.5">
-                          <div className={`text-sm font-bold ${isMerchant ? "text-green-400" : "text-white"}`}>
-                            {isMerchant ? "+" : address ? "−" : ""}{inv.amount} {tokenLabel}
-                          </div>
-                          {inv.memo && (
-                            <div className="text-[10px] text-slate-5 truncate max-w-[120px]">{inv.memo}</div>
-                          )}
-                        </div>
-                      </motion.div>
-                    );
-                  })
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center p-8 border border-dashed border-white/10 rounded-2xl">
-                    <p className="text-slate-11 text-sm italic">
-                      {apiError ? "Activity unavailable" : address ? "No transactions yet" : "No recent activity"}
-                    </p>
-                  </div>
-                )}
+        <section className="space-y-6">
+           <div className="flex justify-between items-end px-2">
+              <div className="space-y-1">
+                <h2 className="text-sm font-bold text-white uppercase tracking-widest">Network Stats</h2>
+                <p className="text-xs text-slate-11">Global activity overview.</p>
+              </div>
+           </div>
+           <StatsCards 
+            stats={stats || { total: 0, pending: 0, settled: 0 }} 
+            loading={!stats} 
+           />
+        </section>
+
+        {/* Activity Section */}
+        <motion.div
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.6 }}
+        >
+          <GlassCard className="p-6 md:p-10 flex flex-col gap-8">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="space-y-2">
+                <h2 className="text-2xl font-bold text-white tracking-tight">
+                  {address ? "Recent Transactions" : "Recent Activity"}
+                </h2>
+                <p className="text-slate-11 text-sm">
+                  {address ? "Latest invoices associated with your wallet." : "Latest transactions across the network."}
+                </p>
               </div>
               
-              {apiError && (
-                <p className="text-[10px] text-slate-5 uppercase tracking-widest text-center mt-4">
-                  Backend check failed · Local connection only
-                </p>
-              )}
-            </GlassCard>
-          </motion.div>
-        </div>
+              <div className="relative w-full md:w-80">
+                <input
+                  type="text"
+                  placeholder="Search hash or memo..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-white/30 transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1">
+              <InvoiceTable 
+                invoices={recentInvoices}
+                loading={recentInvoices.length === 0 && !stats}
+                search={searchQuery}
+                currentPage={currentPage}
+                itemsPerPage={10}
+                setCurrentPage={setCurrentPage}
+                onSettle={() => {}} // Disabled in explorer
+                settlingId={null}
+              />
+            </div>
+
+            {recentInvoices.length > 10 && (
+              <div className="pt-4 border-t border-white/5">
+                <Link to="/profile">
+                  <Button variant="ghost" className="w-full text-[10px] uppercase tracking-widest border border-white/10">
+                    View Full History →
+                  </Button>
+                </Link>
+              </div>
+            )}
+            
+            {apiError && (
+              <p className="text-[10px] text-slate-5 uppercase tracking-widest text-center mt-4">
+                Backend check failed · Local connection only
+              </p>
+            )}
+          </GlassCard>
+        </motion.div>
       </div>
     </div>
   );
