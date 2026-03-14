@@ -825,23 +825,40 @@ export function useStealthPay() {
         e.message.includes("permission"));
 
     /**
-     * Try all three requestRecords call patterns that different wallet
-     * adapters may support. For balance display we try (program, false) —
-     * unspent-only — first, because (program, true) on Leo Wallet returns ALL
-     * records including already-spent ones which inflates the displayed balance.
+     * Returns unspent plaintext records for a program.
+     *
+     * Leo Wallet behaviour:
+     *   requestRecords(program, true)  → ALL records (spent + unspent) in plaintext
+     *                                    — amounts are readable but balance is inflated
+     *   requestRecords(program, false) → UNSPENT records only but data is encrypted
+     *                                    — correct set but parseMicro returns 0
+     *
+     * Correct approach: fetch plaintext (true), then filter out records where
+     * `spent === true`. This gives unspent records with readable amounts.
      */
     const fetchRecordsSafe = async (program: string): Promise<unknown[]> => {
-      // Pattern 1: (program, false) — unspent-only (correct for balance display)
+      // Pattern 1: plaintext records — filter spent ones out
       try {
-        const r = await raceTimeout(requestRecords(program, false));
-        if (Array.isArray(r) && r.length > 0) return r;
+        const r = await raceTimeout(requestRecords(program, true));
+        if (Array.isArray(r) && r.length > 0) {
+          const hasSpentField = r.some(rec => 'spent' in (rec as Record<string, unknown>));
+          if (hasSpentField) {
+            // Wallet marks spent records — filter to unspent only
+            return r.filter((rec: unknown) => {
+              const record = rec as Record<string, unknown>;
+              return record.spent !== true && record.spent !== "true";
+            });
+          }
+          // No spent field — return as-is (adapter handles filtering internally)
+          return r;
+        }
       } catch (e) {
         if (isPermDenied(e)) throw e;
       }
 
-      // Pattern 2: (program, true) — full scan fallback (may include spent records)
+      // Pattern 2: unspent-only encrypted records (correct set, amounts may not parse)
       try {
-        const r = await raceTimeout(requestRecords(program, true));
+        const r = await raceTimeout(requestRecords(program, false));
         if (Array.isArray(r) && r.length > 0) return r;
       } catch (e) {
         if (isPermDenied(e)) throw e;

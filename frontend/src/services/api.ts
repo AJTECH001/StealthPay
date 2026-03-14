@@ -6,8 +6,9 @@
  */
 
 // Dev: Vite proxies /api → localhost:3000 (vite.config.ts).
-// Prod: Vercel Functions handle /api/* on the same domain.
-const API_BASE = import.meta.env.VITE_API_URL ?? "";
+// Prod: calls Render backend directly via VITE_API_URL or hardcoded fallback.
+const API_BASE = import.meta.env.VITE_API_URL
+  ?? (import.meta.env.DEV ? "" : "https://stealthpay.onrender.com");
 
 const FETCH_TIMEOUT_MS = 15_000;
 
