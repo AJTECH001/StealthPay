@@ -1,14 +1,17 @@
 {
   "cleanUrls": true,
   "outputDirectory": "dist",
-  "rewrites": [
+  "routes": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/[...slug].js"
+      "src": "/api/(.*)",
+      "dest": "/api/[...slug].js"
     },
     {
-      "source": "/(.*)",
-      "destination": "/index.html"
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
   ]
 }
