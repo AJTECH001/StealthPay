@@ -6,6 +6,9 @@ function json(res, status, data) {
 }
 
 export default async function handler(req, res) {
+  // Simple request logger
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
