@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "cd frontend && npm install && npm run build"
+    "build": "npm install --prefix frontend && npm run build --prefix frontend && rm -rf dist && cp -r frontend/dist ./dist"
   }
 }
