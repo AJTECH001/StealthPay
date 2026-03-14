@@ -3,6 +3,7 @@ import { AleoWalletProvider as ProvableWalletProvider } from "@provablehq/aleo-w
 import { WalletModalProvider } from "@provablehq/aleo-wallet-adaptor-react-ui";
 import { LeoWalletAdapter } from "@provablehq/aleo-wallet-adaptor-leo";
 import { ShieldWalletAdapter } from "@provablehq/aleo-wallet-adaptor-shield";
+import { PuzzleWalletAdapter } from "@provablehq/aleo-wallet-adaptor-puzzle";
 import { DecryptPermission } from "@provablehq/aleo-wallet-adaptor-core";
 import { Network } from "@provablehq/aleo-types";
 import "@provablehq/aleo-wallet-adaptor-react-ui/dist/styles.css";
@@ -11,10 +12,12 @@ interface AleoWalletProviderProps {
   children: React.ReactNode;
 }
 
+const PROGRAMS = ["credits.aleo", "stealthpay_usdcx_v4.aleo", "test_usdcx_stablecoin.aleo"];
+
 function createPatchedShieldAdapter(appName: string): ShieldWalletAdapter {
-  const adapter = new ShieldWalletAdapter({ 
+  const adapter = new ShieldWalletAdapter({
     appName,
-    programs: ["credits.aleo", "stealthpay_usdcx_v4.aleo", "test_usdcx_stablecoin.aleo"]
+    programs: PROGRAMS
   });
 
   // The Shield extension validates `network` strictly against its enum values.
@@ -50,8 +53,8 @@ function createPatchedLeoAdapter(appName: string): LeoWalletAdapter {
   const adapter = new LeoWalletAdapter({ 
     appName,
     programIdPermissions: {
-      "testnetbeta": ["credits.aleo", "stealthpay_usdcx_v4.aleo", "test_usdcx_stablecoin.aleo"],
-      "testnet": ["credits.aleo", "stealthpay_usdcx_v4.aleo", "test_usdcx_stablecoin.aleo"]
+      testnetbeta: PROGRAMS,
+      testnet: PROGRAMS,
     }
   });
   // Patch requestRecords: newer Leo Wallet versions return a plain array []
@@ -132,9 +135,20 @@ function createPatchedLeoAdapter(appName: string): LeoWalletAdapter {
   return adapter;
 }
 
+function createPuzzleAdapter(appName: string): PuzzleWalletAdapter {
+  return new PuzzleWalletAdapter({
+    appName,
+    programIdPermissions: {
+      testnet: PROGRAMS,
+      testnetbeta: PROGRAMS,
+    },
+  });
+}
+
 export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
   const wallets = useMemo(
     () => [
+      createPuzzleAdapter("StealthPay"),
       createPatchedShieldAdapter("StealthPay"),
       createPatchedLeoAdapter("StealthPay"),
     ],
