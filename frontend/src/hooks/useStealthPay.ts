@@ -786,147 +786,270 @@ export function useStealthPay() {
   const refreshBalances = useCallback(async () => {
     if (!address || !requestRecords) return;
 
-    const apiBases = [
-      "https://api.explorer.aleo.org/v1/testnet",
-      "https://api.explorer.provable.com/v1/testnet",
-      "https://api.provable.com/v2/testnet",
-    ];
+    // Use the same explorer bases as the rest of the app (consistent ordering)
+    const apiBases = [...EXPLORER_BASES];
+
+    // Shared timeout helper — prevents balance refresh from freezing the UI
+    // when the wallet service worker is suspended.
+    const raceTimeout = <T>(p: Promise<T>, ms = 10_000): Promise<T> =>
+      Promise.race([
+        p,
+        new Promise<T>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`requestRecords timeout after ${ms}ms`)),
+            ms
+          )
+        ),
+      ]);
+
+    // Shared record field parser — handles every format wallets may return
+    const parseMicro = (rec: unknown, field: "microcredits" | "amount"): number => {
+      const r = rec as Record<string, unknown>;
+      if (typeof r?.[field] === "number") return r[field] as number;
+      if (typeof r?.[field] === "string")
+        return parseInt((r[field] as string).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
+      if (r?.data) {
+        const v = (r.data as Record<string, unknown>)[field];
+        return typeof v === "number" ? v : parseInt(String(v).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
+      }
+      // Plaintext / JSON string scan (covers Leo / Shield wallet string formats)
+      const content = typeof rec === "string" ? rec : JSON.stringify(rec);
+      const m = content.match(new RegExp(`${field}:\\s*(?:"|')?([\\d_]+)u\\d+`));
+      return m ? parseInt(m[1].replace(/_/g, "")) : 0;
+    };
+
+    const isPermDenied = (e: unknown) =>
+      e instanceof Error &&
+      (e.message.includes("NOT_GRANTED") ||
+        e.message.includes("not granted") ||
+        e.message.includes("permission"));
+
+    /**
+     * Try all three requestRecords call patterns that different wallet
+     * adapters may support. For balance display we try (program, false) —
+     * unspent-only — first, because (program, true) on Leo Wallet returns ALL
+     * records including already-spent ones which inflates the displayed balance.
+     */
+    const fetchRecordsSafe = async (program: string): Promise<unknown[]> => {
+      // Pattern 1: (program, false) — unspent-only (correct for balance display)
+      try {
+        const r = await raceTimeout(requestRecords(program, false));
+        if (Array.isArray(r) && r.length > 0) return r;
+      } catch (e) {
+        if (isPermDenied(e)) throw e;
+      }
+
+      // Pattern 2: (program, true) — full scan fallback (may include spent records)
+      try {
+        const r = await raceTimeout(requestRecords(program, true));
+        if (Array.isArray(r) && r.length > 0) return r;
+      } catch (e) {
+        if (isPermDenied(e)) throw e;
+      }
+
+      // Pattern 3: no second arg — some adapters default to all unspent
+      try {
+        const r = await raceTimeout(
+          (requestRecords as (p: string) => Promise<unknown[]>)(program)
+        );
+        if (Array.isArray(r) && r.length > 0) return r;
+      } catch (e) {
+        if (isPermDenied(e)) throw e;
+      }
+
+      return [];
+    };
+
+    /**
+     * Blockchain fallback — when the wallet scanner hasn't indexed records yet,
+     * try to fetch and decrypt them directly from stored shield tx IDs.
+     * Returns total microcredits/amount found, or 0 if nothing could be decrypted.
+     */
+    const getBlockchainBalance = async (program: string, field: "microcredits" | "amount"): Promise<number> => {
+      const leoWin = (window as any).leoWallet ?? (window as any).leo;
+      if (!leoWin?.decrypt) return 0;
+
+      const txs = getShieldTxs(address).filter(t => t.program === program);
+      let total = 0;
+
+      for (const { txId } of txs) {
+        if (!txId.startsWith("at1")) continue;
+        for (const base of apiBases) {
+          try {
+            const url = `${base.replace("v2", "v1")}/transaction/${txId}`;
+            const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+            if (!res.ok) continue;
+
+            const data = await res.json();
+            const transitions: any[] = data?.execution?.transitions ?? [];
+            for (const t of transitions) {
+              if (t.program !== program) continue;
+              if (t.function !== "transfer_public_to_private") continue;
+
+              const tpk: string = t.tpk ?? "";
+              const outputs: any[] = t.outputs ?? [];
+              for (let idx = 0; idx < outputs.length; idx++) {
+                const out = outputs[idx];
+                if (out.type !== "record" || !out.value) continue;
+                try {
+                  const result = await leoWin.decrypt(
+                    out.value, tpk, program, "transfer_public_to_private", idx
+                  );
+                  const plaintext: string = result?.text ?? result;
+                  if (!plaintext) continue;
+                  total += parseMicro(plaintext, field);
+                } catch { continue; }
+              }
+            }
+            break; // Found the tx, no need to try other bases
+          } catch { continue; }
+        }
+      }
+
+      return total;
+    };
 
     try {
-      // 1. Private credits balance from records
+      // ─── 1. Private credits balance ──────────────────────────────────────────
       if (!recordsAccessDenied.current) {
-        // Same timeout guard as getFirstRecord — prevents balance refresh from
-        // freezing the UI when the wallet service worker is suspended.
-        const raceTimeout = <T>(p: Promise<T>, ms = 10_000): Promise<T> =>
-          Promise.race([
-            p,
-            new Promise<T>((_, reject) =>
-              setTimeout(
-                () => reject(new Error(`requestRecords timeout after ${ms}ms`)),
-                ms
-              )
-            ),
-          ]);
-
         try {
-          const isPermDenied = (e: unknown) =>
-            e instanceof Error &&
-            (e.message.includes("NOT_GRANTED") ||
-              e.message.includes("not granted") ||
-              e.message.includes("permission"));
-
-          let records: unknown[] = [];
-          try {
-            const fetched = await raceTimeout(requestRecords("credits.aleo", true));
-            records = Array.isArray(fetched) ? fetched : [];
-          } catch (e) {
-            if (isPermDenied(e)) throw e;
-            const fb = await raceTimeout(requestRecords("credits.aleo"));
-            records = Array.isArray(fb) ? fb : [];
-          }
-
-          const parseMicro = (rec: unknown, field: "microcredits" | "amount"): number => {
-            const r = rec as Record<string, unknown>;
-            if (typeof r?.[field] === "number") return r[field] as number;
-            if (typeof r?.[field] === "string")
-              return parseInt((r[field] as string).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
-            if (r?.data) {
-              const v = (r.data as Record<string, unknown>)[field];
-              return typeof v === "number" ? v : parseInt(String(v).replace(/u\d+/g, "").replace(/_/g, "")) || 0;
-            }
-            const content = typeof rec === "string" ? rec : JSON.stringify(rec);
-            const m = content.match(new RegExp(`${field}:\\s*(?:"|')?([\\d_]+)u\\d+`));
-            return m ? parseInt(m[1].replace(/_/g, "")) : 0;
-          };
+          const records = await fetchRecordsSafe(CREDITS_PROGRAM_ID);
 
           if (records.length > 0) {
-            // Wallet has scanned the record — use the real on-chain total.
+            // Wallet has scanned the records — use the real on-chain total.
             const total = records.reduce((s: number, r: unknown) => s + parseMicro(r, "microcredits"), 0);
             if (address) clearLedgerField(address, "credits");
             setPrivateBalance(total / 1_000_000);
             setPendingShieldAmount(0); // clear the pending badge — record is confirmed
           } else {
-            // Wallet hasn't scanned the block yet.
-            // Show 0 as the confirmed spendable balance so the dashboard doesn't
-            // double-count with the pending (+X) badge.  The badge alone conveys
-            // that funds are on their way.
-            setPrivateBalance(0);
+            // Wallet returned empty — try blockchain fallback first, then optimistic ledger
+            const bcTotal = await getBlockchainBalance(CREDITS_PROGRAM_ID, "microcredits");
+            if (bcTotal > 0) {
+              setPrivateBalance(bcTotal / 1_000_000);
+              setPendingShieldAmount(0);
+            } else {
+              // Only trust the optimistic ledger if there's a recent shield tx (< 1 hour).
+              // A stale ledger (no recent shield) means records were spent — show 0.
+              const recentShield = getShieldTxs(address).find(
+                tx => tx.program === CREDITS_PROGRAM_ID && Date.now() - tx.timestamp < 3_600_000
+              );
+              const ledger = getLedger(address);
+              if (recentShield && ledger.credits > 0) {
+                setPrivateBalance(ledger.credits);
+              } else {
+                clearLedgerField(address, "credits");
+                setPrivateBalance(0);
+              }
+            }
           }
           setRecordError(null);
 
-          // 1b. Private USDCx balance
+          // ─── 1b. Private USDCx balance ─────────────────────────────────────────
           try {
-            const uRecs = (await raceTimeout(requestRecords(USDCX_PROGRAM_ID, true))) as unknown[];
-            if (uRecs?.length > 0) {
+            const uRecs = await fetchRecordsSafe(USDCX_PROGRAM_ID);
+            if (uRecs.length > 0) {
               const total = uRecs.reduce((s: number, r: unknown) => s + parseMicro(r, "amount"), 0);
               if (address) clearLedgerField(address, "usdcx");
               setUsdcxPrivateBalance(total / 1_000_000);
               setPendingUsdcxAmount(0);
             } else {
-              setUsdcxPrivateBalance(address ? getLedger(address).usdcx : 0);
+              // Blockchain fallback, then optimistic ledger
+              const bcTotal = await getBlockchainBalance(USDCX_PROGRAM_ID, "amount");
+              if (bcTotal > 0) {
+                setUsdcxPrivateBalance(bcTotal / 1_000_000);
+                setPendingUsdcxAmount(0);
+              } else {
+                // Only trust the optimistic ledger if there's a recent shield tx (< 1 hour).
+                const recentShield = getShieldTxs(address).find(
+                  tx => tx.program === USDCX_PROGRAM_ID && Date.now() - tx.timestamp < 3_600_000
+                );
+                const ledger = getLedger(address);
+                if (recentShield && ledger.usdcx > 0) {
+                  setUsdcxPrivateBalance(ledger.usdcx);
+                } else {
+                  clearLedgerField(address, "usdcx");
+                  setUsdcxPrivateBalance(0);
+                }
+              }
             }
           } catch {
             setUsdcxPrivateBalance(address ? getLedger(address).usdcx : 0);
           }
         } catch (recErr) {
-          const isDenied =
-            recErr instanceof Error &&
-            (recErr.message.includes("NOT_GRANTED") ||
-              recErr.message.includes("not granted") ||
-              recErr.message.includes("permission"));
-          if (isDenied) {
+          if (isPermDenied(recErr)) {
             recordsAccessDenied.current = true;
-            setRecordError("Wallet record access not granted. Open Leo Wallet → Settings → allow record access.");
+            setRecordError("Wallet record access not granted. Open wallet → Settings → allow record access.");
           } else {
+            console.warn("[refreshBalances] Record fetch error:", recErr);
             setRecordError("Failed to fetch shielded records.");
           }
-          setPrivateBalance(null);
+          // Even on error, try blockchain fallback instead of just null
+          const bcCredits = await getBlockchainBalance(CREDITS_PROGRAM_ID, "microcredits");
+          const bcUsdcx = await getBlockchainBalance(USDCX_PROGRAM_ID, "amount");
+          setPrivateBalance(bcCredits > 0 ? bcCredits / 1_000_000 : null);
+          setUsdcxPrivateBalance(bcUsdcx > 0 ? bcUsdcx / 1_000_000 : 0);
         }
       }
 
-      // 2. Public credits balance
+      // ─── 2. Public credits balance ───────────────────────────────────────────
       let publicFound = false;
       for (const base of apiBases) {
         try {
-          const res = await fetch(`${base}/program/credits.aleo/mapping/account/${address}`);
+          const res = await fetch(
+            `${base}/program/credits.aleo/mapping/account/${address}`,
+            { signal: AbortSignal.timeout(8000) }
+          );
           if (res.ok) {
             const raw = await res.json();
-            if (raw !== null) {
-              setPublicBalance(parseInt(String(raw).replace("u64", "").replace(/_/g, "")) / 1_000_000);
-              publicFound = true;
-              break;
+            if (raw !== null && raw !== undefined) {
+              // Handle both string ("12345u64") and number formats
+              const rawStr = String(raw).replace(/['"]/g, "");
+              const parsed = parseInt(rawStr.replace(/u\d+/g, "").replace(/_/g, ""));
+              if (!isNaN(parsed)) {
+                setPublicBalance(parsed / 1_000_000);
+                publicFound = true;
+                break;
+              }
             }
           } else if (res.status === 404) {
+            // Address has no public credits — this is a valid result
             setPublicBalance(0);
             publicFound = true;
             break;
           }
-        } catch {}
+        } catch { /* try next base */ }
       }
       if (!publicFound) setPublicBalance(0);
 
-      // 3. Public USDCx balance
+      // ─── 3. Public USDCx balance ─────────────────────────────────────────────
       let usdcxFound = false;
       for (const base of apiBases) {
         try {
-          const res = await fetch(`${base}/program/${USDCX_PROGRAM_ID}/mapping/balances/${address}`);
+          const res = await fetch(
+            `${base}/program/${USDCX_PROGRAM_ID}/mapping/balances/${address}`,
+            { signal: AbortSignal.timeout(8000) }
+          );
           if (res.ok) {
             const raw = await res.json();
-            if (raw !== null) {
-              setUsdcxPublicBalance(parseInt(String(raw).replace("u128", "").replace(/_/g, "")) / 1_000_000);
-              usdcxFound = true;
-              break;
+            if (raw !== null && raw !== undefined) {
+              const rawStr = String(raw).replace(/['"]/g, "");
+              const parsed = parseInt(rawStr.replace(/u\d+/g, "").replace(/_/g, ""));
+              if (!isNaN(parsed)) {
+                setUsdcxPublicBalance(parsed / 1_000_000);
+                usdcxFound = true;
+                break;
+              }
             }
           } else if (res.status === 404) {
             setUsdcxPublicBalance(0);
             usdcxFound = true;
             break;
           }
-        } catch {}
+        } catch { /* try next base */ }
       }
       if (!usdcxFound) setUsdcxPublicBalance(0);
     } catch (err) {
-      console.error("Balance refresh error:", err);
+      console.error("[refreshBalances] Unexpected error:", err);
     }
   }, [address, requestRecords]);
 

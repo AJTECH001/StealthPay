@@ -254,10 +254,26 @@ export default function Explorer() {
               <div className="space-y-1">
                 <h2 className="text-sm font-bold text-white uppercase tracking-widest">Your Portfolio</h2>
                 <p className="text-xs text-slate-11">Real-time balance across public and shielded states.</p>
+                {/* Total balance summary — matches wallet extension view */}
+                <div className="flex items-baseline gap-3 pt-1">
+                  <span className="text-2xl font-serif italic text-white">
+                    {((publicBalance ?? 0) + (privateBalance ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                  <span className="text-xs text-slate-11 uppercase tracking-widest">Total ALEO</span>
+                  {(usdcxPublicBalance ?? 0) + (usdcxPrivateBalance ?? 0) > 0 && (
+                    <>
+                      <span className="text-slate-5">|</span>
+                      <span className="text-lg font-serif italic text-blue-400">
+                        {((usdcxPublicBalance ?? 0) + (usdcxPrivateBalance ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-xs text-slate-11 uppercase tracking-widest">Total USDCx</span>
+                    </>
+                  )}
+                </div>
               </div>
-              <Button 
-                variant="ghost" 
-                size="sm" 
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={refreshBalances}
                 className="text-[10px] uppercase tracking-widest h-8 border border-white/5 bg-white/[0.02] hover:bg-white/10"
               >
@@ -279,34 +295,19 @@ export default function Explorer() {
                     <span className="text-[10px] uppercase tracking-[0.25em] font-bold text-slate-5 text-nowrap">Shielded Credits</span>
                   </div>
                   <div className="text-4xl font-serif italic text-white flex items-baseline gap-2 flex-wrap">
-                    {(privateBalance ?? 0) > 0
-                      ? (privateBalance as number).toLocaleString(undefined, { minimumFractionDigits: 2 })
-                      : pendingShieldAmount > 0
-                        ? <span className="text-white/30">0.00</span>
-                        : "0.00"}
+                    {privateBalance === null
+                      ? <span className="text-white/20 text-2xl animate-pulse">loading…</span>
+                      : privateBalance > 0
+                        ? privateBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })
+                        : pendingShieldAmount > 0
+                          ? <span className="text-white/30">0.00</span>
+                          : "0.00"}
                     <span className="text-sm font-sans not-italic text-slate-11 uppercase tracking-widest font-medium">Credits</span>
                   </div>
-                  {pendingShieldAmount > 0 && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20"
-                      title="Shielded credits are on-chain but your wallet is still scanning the block. They will be spendable once the wallet finishes syncing (~1-2 min)."
-                    >
-                      <div className="w-2 h-2 rounded-full border border-amber-500/50 border-t-amber-500 animate-spin shrink-0" />
-                      <span className="text-[9px] font-bold text-amber-400">
-                        +{pendingShieldAmount.toFixed(2)} scanning — not yet spendable
-                      </span>
-                    </motion.div>
-                  )}
                   {recordError ? (
                     <p className="text-[9px] text-amber-400/80 max-w-[220px] leading-tight">{recordError}</p>
                   ) : (privateBalance ?? 0) > 0 ? (
                     <p className="text-[10px] text-slate-11">Ready to spend.</p>
-                  ) : pendingShieldAmount > 0 ? (
-                    <p className="text-[9px] text-slate-11 leading-tight">
-                      Open Leo Wallet to speed up block scanning.
-                    </p>
                   ) : (
                     <p className="text-[10px] text-slate-11">Private spending records.</p>
                   )}
