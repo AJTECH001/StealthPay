@@ -1,10 +1,6 @@
 {
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "https://stealthpay.onrender.com/api/:path*"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

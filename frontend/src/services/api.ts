@@ -1,11 +1,13 @@
 /**
  * Backend API client for StealthPay.
  * Dev: Vite proxies /api → localhost:3000 (vite.config.ts).
- * Prod: Vercel proxies /api → Render backend (vercel.json).
+ * Prod: calls Render backend directly.
  * Override with VITE_API_URL env var if needed.
  */
 
-const API_BASE = import.meta.env.VITE_API_URL ?? "";
+const API_BASE =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? "https://stealthpay.onrender.com" : "");
 
 const FETCH_TIMEOUT_MS = 15_000;
 
