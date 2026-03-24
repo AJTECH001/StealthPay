@@ -20,7 +20,7 @@ export default function NavBar() {
             <span className="text-black text-xs font-bold">A</span>
           </div>
           <span className="font-bold text-white hidden sm:block font-serif">
-            Aleo<span className="text-white/60">Pay</span>
+            Stealth<span className="text-white/60">Pay</span>
           </span>
         </Link>
 

@@ -1,5 +1,5 @@
 /**
- * Aleo Payroll Registry Hooks
+ * Stealth Payroll Registry Hooks
  *
  * Connects to stealthpay_payroll_v3.aleo on Aleo testnet.
  *
