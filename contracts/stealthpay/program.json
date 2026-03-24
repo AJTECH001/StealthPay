@@ -1,7 +1,7 @@
 {
-  "program": "stealthpay_usdcx_v4.aleo",
+  "program": "stealthpay_payroll_v3.aleo",
   "version": "0.0.0",
-  "description": "",
+  "description": "StealthPay on-chain payroll — lump-sum and streaming in ALEO credits and USDCX",
   "license": "MIT",
   "leo": "3.4.0",
   "dependencies": [

@@ -1,23 +1,30 @@
-import { Suspense, lazy } from "react";
-import { BrowserRouter as Router } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { Toaster } from "sonner";
+import { AleoWalletProvider } from "./providers/AleoWalletProvider";
+import NavBar from "@/components/NavBar";
+import HomePage from "@/pages/HomePage";
+import EmployerPage from "@/pages/EmployerPage";
+import EmployeePage from "@/pages/EmployeePage";
+import AnalyticsPage from "@/pages/AnalyticsPage";
 import "./index.css";
-
-const DesktopApp = lazy(() =>
-  import("./desktop/DesktopApp").then((m) => ({ default: m.default }))
-);
 
 function App() {
   return (
     <Router>
-      <Suspense
-        fallback={
-          <div className="min-h-screen bg-background flex items-center justify-center">
-            <div className="w-8 h-8 border-2 border-foreground/30 border-t-foreground rounded-full" />
-          </div>
-        }
-      >
-        <DesktopApp />
-      </Suspense>
+      <AleoWalletProvider>
+        <div className="min-h-screen">
+          <NavBar />
+          <main className="min-h-[calc(100vh-4rem)]">
+            <Routes>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/employer" element={<EmployerPage />} />
+              <Route path="/employee" element={<EmployeePage />} />
+              <Route path="/analytics" element={<AnalyticsPage />} />
+            </Routes>
+          </main>
+        </div>
+        <Toaster richColors position="top-right" />
+      </AleoWalletProvider>
     </Router>
   );
 }

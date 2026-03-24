@@ -7,10 +7,43 @@ export default {
   theme: {
     extend: {
       colors: {
+        // shadcn/ui CSS-variable tokens
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
+        card: {
+          DEFAULT: "hsl(var(--card))",
+          foreground: "hsl(var(--card-foreground))",
+        },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
+        },
+        muted: {
+          DEFAULT: "hsl(var(--muted))",
+          foreground: "hsl(var(--muted-foreground))",
+        },
+        destructive: {
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))",
+        },
+
         // Base
         background: "#000000",
         foreground: "#FFFFFF",
-        
+        primary: {
+          DEFAULT: "#FFFFFF",
+          foreground: "#000000",
+        },
+        secondary: {
+          DEFAULT: "#1a1a1a",
+          foreground: "#FFFFFF",
+        },
+        accent: {
+          DEFAULT: "#262626",
+          foreground: "#FFFFFF",
+        },
+
         // Radix Slate equivalent for neutral darks
         slate: {
           1: "#000000",
@@ -51,8 +84,22 @@ export default {
       },
       backdropBlur: {
         "xs": "2px",
-      }
+      },
+      borderRadius: {
+        lg: "var(--radius)",
+        md: "calc(var(--radius) - 2px)",
+        sm: "calc(var(--radius) - 4px)",
+      },
+      keyframes: {
+        pulse_stream: {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.5" },
+        },
+      },
+      animation: {
+        pulse_stream: "pulse_stream 2s ease-in-out infinite",
+      },
     },
   },
-  plugins: [],
+  plugins: [require("tailwindcss-animate")],
 };

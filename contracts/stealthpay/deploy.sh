@@ -7,8 +7,8 @@
 
 set -e
 
-PROGRAM_ID="stealthpay_usdcx_v4.aleo"
-EXPLORER="https://testnet.explorer.provable.com"
+PROGRAM_ID="stealthpay_payroll_v1.aleo"
+EXPLORER="https://explorer.provable.com"
 
 echo "📦 Building ${PROGRAM_ID}..."
 leo build

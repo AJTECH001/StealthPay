@@ -1,0 +1,11 @@
+// Test: valid lump-sum ALEO claim
+[claim_payroll_credits]
+employee_record: EmployeeRecord = {
+    owner: aleo1rhgdu77hgyqd3xjj8ucu3jj9r2krwz6mnzyd80gncr5fxcwlh5rsvzp9px,
+    employer: aleo1gglqej3ple3a7twtpk6f7g69cnhsmlc0vexkfj6hspx90mrd35zsx75m46,
+    salary: 5000000u64,
+    payment_type: 0u8,
+    token_type: 0u8,
+    _nonce: 0group.public
+};
+claim_amount: u64 = 5000000u64;

@@ -1,9 +1,7 @@
 import React, { useMemo } from "react";
 import { AleoWalletProvider as ProvableWalletProvider } from "@provablehq/aleo-wallet-adaptor-react";
 import { WalletModalProvider } from "@provablehq/aleo-wallet-adaptor-react-ui";
-import { LeoWalletAdapter } from "@provablehq/aleo-wallet-adaptor-leo";
 import { ShieldWalletAdapter } from "@provablehq/aleo-wallet-adaptor-shield";
-import { PuzzleWalletAdapter } from "@provablehq/aleo-wallet-adaptor-puzzle";
 import { DecryptPermission } from "@provablehq/aleo-wallet-adaptor-core";
 import { Network } from "@provablehq/aleo-types";
 import "@provablehq/aleo-wallet-adaptor-react-ui/dist/styles.css";
@@ -12,7 +10,7 @@ interface AleoWalletProviderProps {
   children: React.ReactNode;
 }
 
-const PROGRAMS = ["credits.aleo", "stealthpay_usdcx_v4.aleo", "test_usdcx_stablecoin.aleo"];
+const PROGRAMS = ["credits.aleo", "stealthpay_payroll_v3.aleo", "test_usdcx_stablecoin.aleo"];
 
 function createPatchedShieldAdapter(appName: string): ShieldWalletAdapter {
   const adapter = new ShieldWalletAdapter({
@@ -34,10 +32,12 @@ function createPatchedShieldAdapter(appName: string): ShieldWalletAdapter {
     // Hook passes fee in credits (0.001) — extension requires positive integer microcredits (1000).
     const feeMicrocredits = options.fee
       ? Math.max(1, Math.round(options.fee * 1_000_000))
-      : 1000;
+      : 50000;
     const cleanOptions = {
       ...options,
       fee: feeMicrocredits,
+      feePrivate: false,
+      privateFee: false,
     };
     return await originalExecute(cleanOptions);
   };
@@ -49,109 +49,9 @@ function createPatchedShieldAdapter(appName: string): ShieldWalletAdapter {
   return adapter;
 }
 
-function createPatchedLeoAdapter(appName: string): LeoWalletAdapter {
-  const adapter = new LeoWalletAdapter({ 
-    appName,
-    programIdPermissions: {
-      testnetbeta: PROGRAMS,
-      testnet: PROGRAMS,
-    }
-  });
-  // Patch requestRecords: newer Leo Wallet versions return a plain array []
-  // but the adapter expects { records: [...] } and does result?.records, giving [].
-  const originalRequestRecords = adapter.requestRecords.bind(adapter);
-  (adapter as any).requestRecords = async function (
-    program: string,
-    includePlaintext?: boolean
-  ) {
-    const result = await originalRequestRecords(program, includePlaintext ?? false);
-    if (result.length > 0) return result;
-
-    // Fallback: call the extension directly and handle both shapes
-    const leoWin = (window as any).leoWallet ?? (window as any).leo;
-    if (!leoWin) return result;
-    try {
-      const raw = includePlaintext
-        ? await leoWin.requestRecordPlaintexts?.(program)
-        : await leoWin.requestRecords?.(program);
-      // Leo Wallet may return { records: [...] } or just [...]
-      return raw?.records ?? (Array.isArray(raw) ? raw : result);
-    } catch {
-      return result;
-    }
-  };
-
-  const originalConnect = adapter.connect.bind(adapter);
-
-  (adapter as any).connect = async function (
-    ...args: Parameters<typeof originalConnect>
-  ) {
-   
-    const leoWin = (window as any).leoWallet ?? (window as any).leo;
-    if (leoWin && typeof leoWin.connect === "function") {
-      (adapter as any)._leoWallet = leoWin;
-    }
-
-    try {
-      return await originalConnect(...args);
-    } catch (err: any) {
-      if (err?.message === "No address returned from wallet") {
-       
-        for (let i = 0; i < 20; i++) {
-          await new Promise((r) => setTimeout(r, 300));
-          const freshWallet = (window as any).leoWallet ?? (window as any).leo;
-          const publicKey =
-            freshWallet?.publicKey ?? freshWallet?.account?.address;
-          if (publicKey) {
-            (adapter as any)._publicKey = publicKey;
-            (adapter as any)._leoWallet = freshWallet;
-            (adapter as any).network = args[0];
-            const account = { address: publicKey };
-            (adapter as any).account = account;
-            adapter.emit("connect", account);
-            return account;
-          }
-        }
-      }
-      throw err;
-    }
-  };
-  
-  const originalExecute = adapter.executeTransaction.bind(adapter);
-  (adapter as any).executeTransaction = async function (options: any) {
-    // Pass only fields defined in TransactionOptions + network
-    // Extra fields like `address`, `publicKey`, `chainId` confuse extension validators.
-    // Fee must be a positive integer in microcredits.
-    const feeMicrocredits = options.fee
-      ? Math.max(1, Math.round(options.fee * 1_000_000))
-      : 1000;
-    const cleanOptions = {
-      ...options,
-      fee: feeMicrocredits,
-    };
-    return await originalExecute(cleanOptions);
-  };
-
-  return adapter;
-}
-
-function createPuzzleAdapter(appName: string): PuzzleWalletAdapter {
-  return new PuzzleWalletAdapter({
-    appName,
-    programIdPermissions: {
-      testnet: PROGRAMS,
-      testnetbeta: PROGRAMS,
-    },
-  });
-}
-
 export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
   const wallets = useMemo(
-    () => [
-      createPuzzleAdapter("StealthPay"),
-      createPatchedShieldAdapter("StealthPay"),
-      createPatchedLeoAdapter("StealthPay"),
-    ],
+    () => [createPatchedShieldAdapter("StealthPay")],
     []
   );
 
@@ -161,11 +61,7 @@ export function AleoWalletProvider({ children }: AleoWalletProviderProps) {
       decryptPermission={DecryptPermission.AutoDecrypt}
       network={Network.TESTNET}
       autoConnect
-      programs={[
-        "credits.aleo", 
-        "stealthpay_usdcx_v4.aleo", 
-        "test_usdcx_stablecoin.aleo"
-      ]}
+      programs={PROGRAMS}
     >
       <WalletModalProvider>{children}</WalletModalProvider>
     </ProvableWalletProvider>

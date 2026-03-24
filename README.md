@@ -1,174 +1,136 @@
-# StealthPay
+# 🛡️ StealthPay Protocol
 
-**Privacy-first payments on Aleo** — private-by-default transactions with selective disclosure for compliance and verification.
+**Privacy-First, On-Chain Payroll for the Aleo Network.**
 
----
-
-## What is StealthPay?
-
-StealthPay is a decentralized payment system built on [Aleo](https://aleo.org) that enables **private invoice-based payments** on top of Aleo Credits. Merchants create invoices and receive payments privately; payers stay off the public ledger; only the merchant receives a cryptographic `Payment` record (receipt) for verification. StealthPay adds an **invoice layer**—commitment hashes, expiry, replay protection—on top of Aleo's native private transfers.
-
-**Program ID:** `stealthpay.aleo` · **Network:** Aleo Testnet
+StealthPay is an institutional-grade, decentralized payroll protocol that enables organizations to disburse salaries in **ALEO credits** and **USDCX stablecoins** with zero-knowledge privacy. By utilizing the Aleo blockchain, StealthPay ensures that sensitive compensation data — including individual salaries, payment frequencies, and employee identities — remains cryptographically encrypted and hidden from the public ledger.
 
 ---
 
-## Why StealthPay-App?
-
-**stealthpay-app** is the full-stack application that brings StealthPay from on-chain program to a usable product. The Leo contract (`stealthpay.aleo`) defines the payment logic; the app provides:
-
-- **Web UI** — Create invoices, pay via links, view activity, settle multi-pay campaigns
-- **Backend API** — Invoice indexing, stats, merchant lookups (Neon PostgreSQL)
-- **Wallet integration** — Leo Wallet adapter for signing and executing private transactions
-
-Without the app, users would need to interact with the contract via CLI or custom scripts. The app makes StealthPay accessible to merchants and payers who want a familiar web experience while preserving full on-chain privacy.
-
----
-
-## Problem We Are Solving
-
-### The Transparency Paradox
-
-On public blockchains (Ethereum, Bitcoin, etc.), every transaction is visible to everyone. Balances, addresses, and amounts are permanently public. Users face a choice:
-
-- **Total surveillance** — Accept that all spending and holdings are visible to anyone
-- **Total obscurity** — Use mixers or privacy coins that sacrifice verifiability
-
-Merchants need **proof of payment** (for accounting, refunds, audits). Payers want **financial privacy** (no public transaction graph). Traditional blockchains force a trade-off: you can't have both without trust in intermediaries.
-
-### The StealthPay Angle
-
-Aleo uses **zero-knowledge proofs** to execute programs privately. State and logic run off-chain; only validity proofs are published. StealthPay builds on this to give:
-
-- **Private by default** — Sender identity and balances stay off the public ledger
-- **Verifiable by design** — Merchants get cryptographic proof of payment
-- **Selectively disclosable** — Merchants can reveal specific payments for audits or refunds without exposing unrelated history
+## 📖 Table of Contents
+- [The Problem: Public Exposure](#the-problem-public-exposure)
+- [The Solution: ZK-Privacy by Default](#the-solution-zk-privacy-by-default)
+- [Protocol Features](#protocol-features)
+- [Technical Architecture](#technical-architecture)
+- [Smart Contract Specification](#smart-contract-specification)
+- [AI Payroll Intelligence](#ai-payroll-intelligence)
+- [Privacy Model & ZK Commitments](#privacy-model--zk-commitments)
+- [Local Development & Deployment](#local-development--deployment)
+- [Protocol Roadmap](#protocol-roadmap)
 
 ---
 
-## StealthPay Approach
+## ⚠️ The Problem: Public Exposure
+Institutional adoption of blockchain payroll has been historically blocked by the **lack of financial privacy**. On public chains:
+- **Competitors** can monitor hiring velocity, headcount, and compensation benchmarks.
+- **Employees** lose their right to financial anonymity; their net worth and spending habits become publicly traceable.
+- **HR/Legal Teams** face compliance risks by broadcasting sensitive internal data to a global audience.
 
-### 1. Invoice Flow (Commitment + Replay Protection)
-
-| Step | What happens |
-|------|--------------|
-| **Create invoice** | Merchant commits to (merchant, amount, salt) via hash. Only the hash and status go on-chain—amount and merchant stay private. |
-| **Pay invoice** | Payer uses `pay_invoice` with a private credits record. The program transfers credits to the merchant and emits a private `Payment` record. Replay protection uses a receipt key (payment secret + salt). |
-| **Settle** | Standard invoices auto-settle on pay. Multi-pay invoices are settled manually by the merchant when the campaign ends. |
-
-### 2. Private Records
-
-- **`Payment`** — Private receipt owned by the merchant (owner, amount, payer). Only the merchant can decrypt it.
-- **Invoice metadata** — Stored by commitment hash only. No plaintext merchant or amount on-chain.
-
-### 3. Two Payment Paths
-
-- **Invoice path** — `create_invoice` → share payment link → `pay_invoice`. Full invoice semantics (expiry, status, replay protection).
-- **Direct path** — `make_payment`. No invoice; direct private transfer + `Payment` receipt. Good for tips or simple one-off payments.
-
-### 4. Backend as Indexer
-
-The backend does **not** read from the chain. The frontend pushes invoice data after `create_invoice` and updates status after `pay_invoice` or `settle_invoice`. This keeps the app responsive while the chain remains the source of truth.
+## ✅ The Solution: ZK-Privacy by Default
+StealthPay utilizes Aleo's native **Zero-Knowledge (ZK)** execution environment to achieve:
+- **Zero-Plaintext Storage:** Salary amounts are never stored as readable numbers; they are committed via `BHP256` hashes.
+- **Recipient Privacy:** Payments are settled as private ZK records that only the recipient can decrypt via their viewing keys.
+- **Verifiable Solvency:** Auditors can verify that the payroll vault is fully funded and disbursed WITHOUT learning individual salary details.
 
 ---
 
-## Project Structure
+## 🚀 Protocol Features
 
-```
-stealthpay-app/
-├── frontend/                # React + Vite web app
-│   ├── src/
-│   │   ├── desktop/         # Pages (Explorer, CreateInvoice, PaymentPage, Profile)
-│   │   ├── components/      # UI components
-│   │   ├── hooks/           # useStealthPay (contract calls)
-│   │   ├── providers/       # Aleo wallet adapter
-│   │   └── services/        # API client, stealthpay helpers
-│   └── vite.config.ts       # Proxy /api → backend
-├── backend/                 # Express API + Neon PostgreSQL
-│   ├── index.js             # REST endpoints (invoices, stats, by-salt)
-│   ├── db_schema.sql        # Invoices table
-│   ├── setup-db.js          # Schema setup (no psql required)
-│   └── encryption.js        # Encrypt merchant/payer addresses
-├── contracts/
-│   └── stealthpay/          # Leo program (stealthpay.aleo)
-│       ├── src/main.leo     # create_invoice, pay_invoice, settle_invoice, make_payment
-│       └── deploy.sh
-├── docs/
-│   └── TESTING_WALKTHROUGH.md
-└── README.md
+### 🏦 For Employers
+- **Company Registry:** One-click on-chain registration for organizations.
+- **Multi-Token Vaults:** Fund your payroll with native **ALEO Credits** or **USDCX** stablecoins.
+- **Hybrid Payout Models:** Support for both **Lump-Sum** (interval-based) and **Real-Time Streaming** (per-block accrual).
+- **One-Time Bonuses:** Integrated "Gift" feature for instant token disbursements outside the standard payroll cycle.
+
+### 👤 For Employees
+- **Private Access:** View salary, stream progress, and payment history in total privacy.
+- **Self-Sovereign Claims:** Employees trigger their own payout claims via private ZK proofs.
+- **Lifetime Earnings Tracker:** Monitor total accumulated wealth from the protocol.
+
+### 📊 Public Transparency
+- **Global TVL:** A public-facing monitor (powered by `credits.aleo` ledger) showing the total value secured by the protocol.
+- **Active User Metrics:** Real-time visibility into the growth of the on-chain workforce.
+
+---
+
+## 🏗 Technical Architecture
+
+```mermaid
+graph TD
+    subgraph Frontend [User Interface - Vite/React]
+        E[Employer Dashboard]
+        L[Employee Portal]
+        A[Public Analytics]
+    end
+
+    subgraph Wallet [Aleo Wallet Adaptor]
+        S[Shield Wallet]
+    end
+
+    subgraph Protocol [stealthpay_payroll_v3.aleo]
+        M1[(companies)] 
+        M2[(company_credits)]
+        M3[(employee_registry)]
+        R[Employee Records]
+    end
+
+    E --> S
+    L --> S
+    S --> Protocol
+    Protocol --ZK Proofs--> S
+    S --"requestRecords()"--> Protocol
 ```
 
 ---
 
-## Quick Start
+## 🔐 Privacy Model & ZK Commitments
+
+Salaries are committed to the ledger during the onboarding transition using a client-side secret:
+
+$$commitment = BHP256(salary + secret)$$
+
+At the time of claim, the employee's browser generates a ZK proof demonstrating they know the `salary` and `secret` that hashed to the value in the public registry. The contract validates the proof and mints a private `credits` record to the employee's wallet. **The plaintext salary never touches the internet or the secondary ledger.**
+
+---
+
+## 🤖 AI Payroll Intelligence
+StealthPay integrates an embedded **Claude (Anthropic)** intelligence layer to help finance teams detect:
+- **Anomalies:** High-severity salary outliers or underfunded vaults.
+- **Insights:** Distribution analysis between Streaming vs. Lump-Sum models.
+- **Recommendations:** Suggested rebalancing for optimized capital efficiency.
+
+*Note: AI analysis is performed on aggregated, local data. Your private ZK secrets are never sent to external APIs.*
+
+---
+
+## 🛠 Local Development
 
 ### Prerequisites
+- [Leo CLI](https://developer.aleo.org/leo/installation) v3.4+
+- [Node.js](https://nodejs.org) v18.17+
+- [Shield Wallet](https://shieldwallet.io)
 
-- [Node.js](https://nodejs.org/) 18+
-- [Leo Wallet](https://www.leo.app/) (or compatible Aleo wallet)
-- [Leo CLI](https://leo-lang.org/) (for contract development/deployment)
-
-### 1. Backend (Neon PostgreSQL + API)
-
+### Setup & Run
 ```bash
-cd backend
-cp .env.example .env
-# Edit .env: DATABASE_URL (Neon), ENCRYPTION_KEY (openssl rand -hex 32)
-npm install
-npm run setup-db   # Creates tables
-npm run dev       # Runs on port 3000
-```
-
-### 2. Frontend
-
-```bash
+# 1. Install frontend dependencies
 cd frontend
 npm install
-npm run dev       # Runs on http://localhost:5173
+
+# 2. Configure Environment
+# Rename .env.example to .env.local and add your ANTHROPIC_API_KEY
+npm run dev
 ```
 
-### 3. Connect wallet
-
-Use **Connect Wallet** in the navbar. Ensure `stealthpay.aleo` is deployed on your network and you have private credits for paying invoices.
-
-### 4. Contract deployment (if needed)
-
+### Deploy Smart Contract
 ```bash
 cd contracts/stealthpay
-cp .env.example .env
-# Edit .env: NETWORK, PRIVATE_KEY
+# Ensure your .env has your PRIVATE_KEY
 leo build
-leo deploy --broadcast
+leo deploy --broadcast --yes
 ```
 
-See [contracts/stealthpay/README.md](contracts/stealthpay/README.md) for details.
-
 ---
 
-## Features
+## 📜 License
+StealthPay is released under the **MIT License**.
 
-| Feature | Description |
-|--------|-------------|
-| **Private transfers** | Uses `credits.aleo/transfer_private` — no public balance updates |
-| **Payment receipts** | Private `Payment` records owned by merchants |
-| **Invoice flow** | `create_invoice` / `pay_invoice` with commitment hash, expiry, replay protection |
-| **Multi-pay invoices** | Campaign-style invoices; merchant settles manually |
-| **Direct payment** | `make_payment` — no invoice, just private transfer + receipt |
-| **Selective disclosure** | Merchants can reveal specific receipts for audits or refunds |
-| **Zero protocol fees (MVP)** | Pay only network costs |
-
----
-
-## Documentation
-
-- **[docs/TESTING_WALKTHROUGH.md](docs/TESTING_WALKTHROUGH.md)** — End-to-end testing guide for all functions
-- **[contracts/stealthpay/README.md](contracts/stealthpay/README.md)** — Leo program design, build, deploy
-
----
-
-## Roadmap
-
-| Phase | Focus |
-|-------|-------|
-| **Phase 1 (MVP)** | Private transfer + Payment receipt + invoice flow — *current* |
-| **Phase 2** | SDK for auto-detection of payments and invoice matching |
-| **Phase 3** | E-commerce plugins, DAO integrations |
+Built with 🛡️ for the [Aleo Network](https://aleo.org).
