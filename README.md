@@ -93,12 +93,15 @@ At the time of claim, the employee's browser generates a ZK proof demonstrating 
 ---
 
 ## 🤖 AI Payroll Intelligence
-StealthPay integrates an embedded **Claude (Anthropic)** intelligence layer to help finance teams detect:
+
+StealthPay integrates an embedded AI analytics layer powered by **Claude Haiku (`claude-haiku-4-5`)** via a Vercel serverless function (`/api/analyze`). The model is intentionally lightweight — fast, low-latency, and cost-efficient for structured payroll analysis tasks.
+
+The AI helps finance teams detect:
 - **Anomalies:** High-severity salary outliers or underfunded vaults.
 - **Insights:** Distribution analysis between Streaming vs. Lump-Sum models.
-- **Recommendations:** Suggested rebalancing for optimized capital efficiency.
+- **Recommendations:** Suggested actions for capital efficiency and payroll health.
 
-*Note: AI analysis is performed on aggregated, local data. Your private ZK secrets are never sent to external APIs.*
+**Privacy guarantee:** AI analysis runs only on aggregated, employer-visible data (employee count, payment type distribution, funding levels). ZK secrets, private records, and individual salary amounts are never sent to the model or any external API.
 
 ---
 
